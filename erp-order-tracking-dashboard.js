@@ -407,15 +407,33 @@ void (async () => {
 
     container.innerHTML = state.groups.map(g => {
       const pct = g.total === 0 ? 0 : Math.round((g.completed / g.total) * 100);
-      const isDone = g.completed >= g.total;
-      const statusClass = isDone ? 'done' : 'scanning';
-      const statusText = isDone ? 'COMPLETED' : 'SCANNING...';
+      const isScanDone = g.completed >= g.total;
+      
+      const remaining = g.targets.filter(t => {
+        if (!t.excelMatches || t.excelMatches.length === 0) return true;
+        return !t.excelMatches.some(m => ['accepted', 'done'].includes(m.statusRaw));
+      }).length;
+
+      let statusClass = 'scanning';
+      let statusText = 'SCANNING...';
+      let statusStyle = '';
+      
+      if (isScanDone) {
+        if (remaining === 0) {
+          statusClass = 'done';
+          statusText = 'DONE';
+        } else {
+          statusClass = ''; // Remove animation class for stable text
+          statusText = `${remaining} REMAINING`;
+          statusStyle = 'color: var(--retro-amber);';
+        }
+      }
 
       return `
         <div class="r-group-card" data-id="${g.id}">
           <div class="r-group-header">
             <span>${g.name}</span>
-            <span class="r-group-status ${statusClass}">${statusText}</span>
+            <span class="r-group-status ${statusClass}" style="${statusStyle}">${statusText}</span>
           </div>
           <div class="r-progress-bar-bg"><div class="r-progress-bar" style="width:${pct}%"></div></div>
           <div style="font-size:14px; color:var(--retro-muted); margin-top:4px; font-family:'VT323', monospace;">
@@ -633,6 +651,11 @@ void (async () => {
     const totalValue = found.reduce((sum, t) => sum + t.poTotal, 0);
     const avg = found.length ? (totalValue / found.length) : 0;
     
+    const remainingCount = group.targets.filter(t => {
+      if (!t.excelMatches || t.excelMatches.length === 0) return true;
+      return !t.excelMatches.some(m => ['accepted', 'done'].includes(m.statusRaw));
+    }).length;
+
     let scanIndicator = group.completed < group.total ? `<div class="r-group-status scanning" style="margin-bottom:8px; font-family:'Press Start 2P', monospace; font-size:7px;">SCANNING (${group.completed}/${group.total})</div>` : '';
 
     $('rStatsArea').innerHTML = scanIndicator + `
@@ -643,6 +666,7 @@ void (async () => {
       <div class="r-stats" style="grid-template-columns: 1fr; margin-bottom: 0;">
         <div class="r-stat"><span class="val">${group.total}</span><span class="lbl">SCANNED</span></div>
         <div class="r-stat"><span class="val green">${found.length}</span><span class="lbl">SUCCESS</span></div>
+        <div class="r-stat"><span class="val" style="color:var(--retro-amber)">${remainingCount}</span><span class="lbl">REMAINING</span></div>
         <div class="r-stat"><span class="val red">${notFound.length}</span><span class="lbl">FAILED</span></div>
         <div class="r-stat"><span class="val" style="font-size:11px">&#8377; ${avg.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span><span class="lbl">AVG PO</span></div>
       </div>
