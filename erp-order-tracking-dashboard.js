@@ -27,6 +27,7 @@ void (async () => {
       --retro-amber: #e0b054;
       --retro-red: #d68c86;
       --retro-purple: #b59a8f;
+      --retro-blue: #6d9eeb;
       --retro-dim: #3a3530;
       --retro-text: #faf0e0;
       --retro-muted: #bcaea0;
@@ -40,7 +41,7 @@ void (async () => {
       box-shadow: 0 0 0 var(--px) #5e4d3d, inset 0 0 0 var(--px) #5e4d3d;
       font-family: 'VT323', monospace;
       color: var(--retro-text);
-      width: 600px;
+      width: 620px;
       max-height: 92vh;
       display: flex;
       flex-direction: column;
@@ -75,11 +76,11 @@ void (async () => {
 
     .r-tabs {
       display: flex; border-bottom: var(--px) solid var(--retro-border);
-      flex-shrink: 0; background: var(--retro-dim);
+      flex-shrink: 0; background: var(--retro-dim); flex-wrap: wrap;
     }
 
     .r-tab {
-      flex: 1; padding: 10px 4px; text-align: center;
+      flex: 1; padding: 10px 4px; text-align: center; min-width: 90px;
       font-family: 'Press Start 2P', monospace; font-size: 8px; color: var(--retro-muted);
       cursor: pointer; border-right: var(--px) solid var(--retro-border);
       letter-spacing: 0.5px; transition: color 0.1s, background 0.1s;
@@ -134,6 +135,8 @@ void (async () => {
     .r-btn.secondary:hover:not(:disabled) { border-color: var(--retro-muted); color: var(--retro-text); }
     .r-btn.amber { background: rgba(224,176,84,0.12); border-color: var(--retro-amber); color: var(--retro-amber); }
     .r-btn.amber:hover:not(:disabled) { background: rgba(224,176,84,0.22); }
+    .r-btn.blue { background: rgba(109,158,235,0.12); border-color: var(--retro-blue); color: var(--retro-blue); }
+    .r-btn.blue:hover:not(:disabled) { background: rgba(109,158,235,0.24); }
 
     .r-btn-row { display: flex; gap: 6px; }
     .r-btn-row .r-btn { flex: 1; }
@@ -202,6 +205,46 @@ void (async () => {
     .r-blink { animation: blink 1s step-end infinite; }
     @keyframes blink { 50% { opacity: 0; } }
 
+    .r-rule-card {
+      background: var(--retro-dim); border: var(--px) solid var(--retro-border);
+      padding: 8px 10px; margin-bottom: 6px; font-size: 14px;
+    }
+    .r-rule-card b { color: var(--retro-accent); font-family: 'Press Start 2P', monospace; font-size: 9px; }
+    .r-rule-card .skus { color: var(--retro-muted); display:block; margin: 4px 0 6px; word-break: break-word; }
+
+    /* Stock issue lines - boxed for visibility */
+    .issue-line {
+      font-family: 'Press Start 2P', monospace; font-size: 8px; line-height: 1.5;
+      padding: 4px 6px; margin-top: 4px; border-left: 3px solid; border-radius: 2px;
+    }
+    .issue-line.short { color: #ffb3ac; background: rgba(214,140,134,0.16); border-color: var(--retro-red); }
+    .issue-line.produce { color: #a9c9ff; background: rgba(109,158,235,0.16); border-color: var(--retro-blue); }
+
+    /* Toggle switch */
+    .r-toggle-row { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:14px; color:var(--retro-muted); }
+    .r-toggle { position:relative; width:36px; height:20px; flex-shrink:0; }
+    .r-toggle input { opacity:0; width:0; height:0; }
+    .r-toggle .slider {
+      position:absolute; cursor:pointer; inset:0; background:var(--retro-dim);
+      border: var(--px) solid var(--retro-border); transition:.15s; border-radius:20px;
+    }
+    .r-toggle .slider::before {
+      content:""; position:absolute; height:12px; width:12px; left:2px; top:2px;
+      background:var(--retro-muted); transition:.15s; border-radius:50%;
+    }
+    .r-toggle input:checked + .slider { border-color: var(--retro-accent); background: rgba(224,157,94,0.25); }
+    .r-toggle input:checked + .slider::before { transform: translateX(16px); background: var(--retro-accent); }
+
+    /* Warehouse tab list */
+    .wh-item {
+      background: var(--retro-dim); border: var(--px) solid var(--retro-border);
+      padding: 8px 10px; margin-bottom: 6px; font-size: 14px; display:flex; justify-content:space-between; align-items:center; gap:8px;
+    }
+    .wh-item .wh-left { display:flex; flex-direction:column; gap:2px; min-width:0; }
+    .wh-item .wh-po { color: var(--retro-accent); font-weight:bold; }
+    .wh-item .wh-party { color: var(--retro-muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .wh-item .wh-date { color: var(--retro-muted); font-size:12px; flex-shrink:0; }
+
     /* Notice Overlay */
     .r-notice-overlay {
       position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
@@ -218,15 +261,17 @@ void (async () => {
     <div class="r-header">
       <div class="r-title-row">
         <span style="font-size:12px">&#9658;</span>
-        <span id="rTitleText">PO SCANNER v2.3 PRO</span>
+        <span id="rTitleText">PO SCANNER v2.5 PRO (STOCK + RULES)</span>
       </div>
       <button class="r-close" id="rClose">&#10005; EXIT</button>
     </div>
 
     <div class="r-tabs" id="rTabBar">
       <div class="r-tab active" data-tab="groups">GROUPS / BATCHES</div>
+      <div class="r-tab" data-tab="warehouse">YB WAREHOUSE POs</div>
       <div class="r-tab" data-tab="auto">AUTO DASHBOARD</div>
       <div class="r-tab" data-tab="excel">EXCEL STATUS</div>
+      <div class="r-tab" data-tab="rules">IGNORE RULES</div>
     </div>
 
     <div class="r-body" id="rBody">
@@ -239,6 +284,15 @@ void (async () => {
         <span class="r-scanline-label">ACTIVE & COMPLETED SCANS</span>
         <div id="rGroupListContainer">
            <p class="r-hint" style="text-align:center; padding: 20px 0;">NO GROUPS CREATED YET.</p>
+        </div>
+      </div>
+
+      <!-- YB FG WAREHOUSE POs -->
+      <div class="r-section" id="secWarehouse">
+        <span class="r-scanline-label">POs FROM SALES ORDER STATUS &mdash; WAREHOUSE = YB FG WAREHOUSE</span>
+        <p class="r-hint">Upload the Sales Order Status Report in the Excel tab first. This lists every PO routed to YB FG Warehouse, newest first.</p>
+        <div id="rWarehouseArea">
+           <p class="r-hint" style="text-align:center; padding: 20px 0;">UPLOAD SALES ORDER REPORT TO SEE POs.</p>
         </div>
       </div>
 
@@ -268,6 +322,13 @@ void (async () => {
           <div class="r-results-left" id="rStatsArea"></div>
           <div class="r-results-right">
             <span class="r-scanline-label">PROCESSED ORDERS</span>
+            <label class="r-toggle-row">
+              <span class="r-toggle">
+                <input type="checkbox" id="rToggleStockIssues" checked>
+                <span class="slider"></span>
+              </span>
+              SHOW STOCK ISSUES
+            </label>
             <div class="r-links" id="rLinkList" style="max-height:none; overflow:visible;"></div>
             <div id="rNotFoundArea"></div>
           </div>
@@ -276,16 +337,22 @@ void (async () => {
 
       <!-- EXCEL TAB -->
       <div class="r-section" id="secExcel">
-        <span class="r-scanline-label">1. UPLOAD SALES ORDER REPORT (For Customer Info)</span>
+        <span class="r-scanline-label">1. UPLOAD SALES ORDER REPORT (For Customer Info & Stock Issues)</span>
         <label class="r-file-drop" id="rSalesOrderDrop">
           <input type="file" id="rSalesOrderInput" accept=".xlsx, .xls, .csv">
-          <p id="rSalesOrderName">[ CLICK TO LOAD SALES ORDER FILE ]</p>
+          <p id="rSalesOrderName">[ CLICK TO LOAD BizeeBuy Sales Order Status Report... ]</p>
         </label>
 
         <span class="r-scanline-label">2. UPLOAD DISPATCH PLANNING SHEET (To Mark POs as Processed)</span>
         <label class="r-file-drop" id="rDispatchDrop">
           <input type="file" id="rDispatchInput" accept=".xlsx, .xls, .csv">
           <p id="rDispatchName">[ CLICK TO LOAD DISPATCH SHEET ]</p>
+        </label>
+
+        <span class="r-scanline-label">3. UPLOAD FINISHED GOODS EXCEL (For Stock Analysis against SO)</span>
+        <label class="r-file-drop" id="rFGDrop">
+          <input type="file" id="rFGInput" accept=".xlsx, .xls, .csv">
+          <p id="rFGName">[ CLICK TO LOAD Finished Goods Excel (3).xls ]</p>
         </label>
         
         <div id="rExcelDataArea" style="display:none; max-height: 400px; overflow-y:auto; padding-right:5px;"></div>
@@ -309,11 +376,34 @@ void (async () => {
         </div>
       </div>
 
+      <!-- IGNORE RULES -->
+      <div class="r-section" id="secRules">
+        <span class="r-scanline-label">GLOBAL IGNORE FG CODES</span>
+        <p class="r-hint">These FG codes never show up as a shortage, for any customer. Match on full code or last 6 digits.</p>
+        <textarea id="rGlobalIgnore" class="r-textarea" placeholder="YB/COM/15297N, 15297N ..."></textarea>
+
+        <span class="r-scanline-label" style="margin-top:16px;">CUSTOMER-SPECIFIC IGNORE</span>
+        <p class="r-hint">Pick a customer (populated from the Sales Order upload) and list FG codes to ignore only for them.</p>
+        <select id="rCustSelect" class="r-select">
+            <option value="">-- LOAD EXCEL FIRST TO SELECT CUSTOMER --</option>
+        </select>
+        <textarea id="rCustIgnore" class="r-textarea" placeholder="SKUs to ignore for this customer..."></textarea>
+        <button class="r-btn secondary" id="btnAddCustRule">+ ADD / UPDATE CUSTOMER RULE</button>
+
+        <span class="r-scanline-label" style="margin-top:16px;">SAVED CUSTOMER RULES</span>
+        <div id="rCustRulesList"></div>
+      </div>
+
     </div>
 
     <!-- FOOTERS -->
     <div class="r-footer" id="rFooter">
       <div id="ftGroups" style="display:flex; flex-direction:column; gap:6px;"></div>
+
+      <div id="ftWarehouse" style="display:none; flex-direction:column; gap:6px;">
+        <button class="r-btn primary" id="rWhCreateGroup">&#9654; CREATE SCAN GROUP FROM UNPROCESSED</button>
+        <button class="r-btn secondary" id="rWhCopyList">&#8942; COPY ALL PO NUMBERS</button>
+      </div>
       
       <div id="ftCreateGroup" style="display:none; flex-direction:column; gap:6px;">
         <button class="r-btn success" id="rStartManual">&#9654; START BACKGROUND SCAN</button>
@@ -327,6 +417,10 @@ void (async () => {
       <div id="ftResults" style="display:none; flex-direction:column; gap:6px;">
         <button class="r-btn success" id="rOpenAll">&#9658;&#9658; OPEN ALL FOUND ORDERS</button>
         <button class="r-btn primary" id="rToExport">&#8594; CALCULATE BOXES & EXPORT</button>
+        <div class="r-btn-row">
+          <button class="r-btn amber" id="rExportIssuesCsv">&#8595; STOCK ISSUES (CSV)</button>
+          <button class="r-btn blue" id="rExportPickingXlsx">&#8595; SO vs DISPATCH DIFF (XLSX)</button>
+        </div>
         <button class="r-btn secondary" id="rResetFades">&#8634; RESET FADES (UN-CLICK ALL)</button>
         <div class="r-btn-row">
           <button class="r-btn amber" id="rRescanGroup">&#8635; RESCAN ENTIRE GROUP</button>
@@ -343,6 +437,10 @@ void (async () => {
       <div id="ftExcel" style="display:none; flex-direction:column; gap:6px;">
           <!-- Empty for now, file handles itself -->
       </div>
+
+      <div id="ftRules" style="display:none; flex-direction:column; gap:6px;">
+          <!-- Rules auto-save on input -->
+      </div>
     </div>
   `;
 
@@ -355,17 +453,38 @@ void (async () => {
     parsedCSV: null,
     dashboardAbort: false,
     currentDispatchPOs: new Set(), // Tracks POs only from the LAST uploaded dispatch sheet
-    excelMeta: {} // Stores party and date data extracted from Excel
+    excelMeta: {}, // Stores party and date data extracted from Excel
+    showStockIssues: true,
+    warehousePOs: [], // { poNo, orderId, party, dateStrRaw, warehouse }
+    poNoToOrderId: {}, // normalized PO No -> normalized Order ID (bridge between the two identifiers)
+    soItemsByOrderId: {}, // normalized Order ID -> { party, codes: Set() }   (from Sales Order Status file)
+    dispatchItemsByOrderId: {} // normalized Sales Order value -> Set(codes) (from Pre-Invoicing Dispatch file)
   };
 
   // Robust normalizer for all PO lookups
   const normalizePO = (po) => String(po).trim().toUpperCase();
+  const normCust = (name) => String(name || '').trim().toUpperCase();
+
+  // Customers that always appear pinned at the top of the ignore-rules dropdown,
+  // regardless of whether they've shown up in an uploaded file yet.
+  const PINNED_CUSTOMERS = [
+    'Blink Commerce Private Limited',
+    'CMUNITY INNOVATIONS PRIVATE LIMITED(CITY MALL)',
+    'FIRSTCLUB TECHNOLOGY PRIVATE LIMITED',
+    'Flipkart India Private Limited - Hyperlocal',
+    'Flipkart India Private Limited - Supermart',
+    'Innovative Retail Concepts Private Limited',
+    'RK WORLDINFOCOM PRIVATE LIMITED',
+    'Scootsy Logistics Private Ltd',
+    'Zepto Limited'
+  ];
+
+  const WAREHOUSE_FILTER = 'yb fg warehouse';
 
   let wakeLock = null;
   let antiSleepAudio = null;
 
   async function enableAntiSleep() {
-    // 1. Request Screen Wake Lock
     try {
       if ('wakeLock' in navigator && !wakeLock) {
         wakeLock = await navigator.wakeLock.request('screen');
@@ -374,10 +493,8 @@ void (async () => {
       console.warn("Wake lock failed:", err);
     }
 
-    // 2. Silent Audio Loop (Forces browser to keep background tab active)
     if (!antiSleepAudio) {
       antiSleepAudio = document.createElement('audio');
-      // Tiny 1-second silent WAV encoded in base64
       antiSleepAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
       antiSleepAudio.loop = true;
       antiSleepAudio.volume = 0; 
@@ -396,14 +513,136 @@ void (async () => {
     setTimeout(() => { if (div.parentNode) div.remove(); }, 3500);
   }
 
+  // Helper to safely extract column values ensuring strict order of preference
+  const getColValue = (row, validKeys) => {
+    for (let v of validKeys) {
+        const target = String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
+        for (let k in row) {
+            const currentKey = String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (currentKey === target) {
+                return row[k];
+            }
+        }
+    }
+    return null;
+  };
+
+  // =========================================================================
+  // DEDICATED CODE SECTION: Stock Issue Analysis Engine
+  // Calculates differences between SO requirements and Finished Goods
+  // inventory, maps items to POs, and applies global/customer ignore rules.
+  // =========================================================================
+  const StockIssueAnalyzer = {
+    salesOrderItems: {}, // { "PO_123": [ { rawSku, sku6, reqQty } ] }
+    fgStockData: {},     // { "YB/COM/15297N": { stock, producible } }
+    globalIgnore: new Set(),
+    customerIgnore: {},  // { "CUSTOMER NAME": Set(["SKU1","123456"]) }
+
+    // Last 6 characters of a SKU, used for compact display + ignore matching
+    getLastSixDigits: function(str) {
+      if (!str) return 'UNKNOWN';
+      const s = String(str).trim();
+      return s.length > 6 ? s.slice(-6) : s;
+    },
+
+    // Process a single row from the Sales Order Report Excel upload
+    processSalesOrderRow: function(poNumber, rowData) {
+      const sku = getColValue(rowData, ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Item', 'Product']);
+      const qtyRaw = getColValue(rowData, ['Order Qty', 'Quantity', 'Qty', 'Total Qty']);
+      const qty = parseFloat(qtyRaw) || 0;
+
+      if (sku && qty > 0) {
+        if (!this.salesOrderItems[poNumber]) {
+          this.salesOrderItems[poNumber] = [];
+        }
+        this.salesOrderItems[poNumber].push({
+          rawSku: String(sku).trim(),
+          sku6: this.getLastSixDigits(sku),
+          reqQty: qty
+        });
+      }
+    },
+
+    // Process the "Finished Goods Excel" upload (In Stock Qty + Max Producible Qty)
+    processFinishedGoodsData: function(data) {
+      data.forEach(row => {
+        const sku = getColValue(row, ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Product']);
+        const stockRaw = getColValue(row, ['In Stock Qty', 'Available Qty', 'Stock Qty', 'Stock', 'Closing Stock', 'Quantity']);
+        const prodRaw = getColValue(row, ['Max Producible Qty', 'Producible Qty', 'Max Producible Quantity']);
+
+        const stock = parseFloat(stockRaw) || 0;
+        const producible = parseFloat(prodRaw) || 0;
+
+        if (sku) {
+          const cleanSku = String(sku).trim().toUpperCase();
+          this.fgStockData[cleanSku] = { stock, producible };
+        }
+      });
+    },
+
+    isIgnored: function(rawSku, sku6, customerName) {
+      const upperRaw = rawSku.toUpperCase();
+      const upperSix = sku6.toUpperCase();
+      if (this.globalIgnore.has(upperRaw) || this.globalIgnore.has(upperSix)) return true;
+      if (customerName) {
+        const set = this.customerIgnore[normCust(customerName)];
+        if (set && (set.has(upperRaw) || set.has(upperSix))) return true;
+      }
+      return false;
+    },
+
+    // Calculate shortages for a PO, applying ignore rules + processed skip
+    getIssuesForPO: function(poNumber, customerName, isProcessed) {
+      const issues = [];
+
+      // If the order has already been processed/dispatched, don't flag shortages
+      if (isProcessed) return issues;
+
+      const items = this.salesOrderItems[poNumber];
+      if (!items) return issues;
+      if (Object.keys(this.fgStockData).length === 0) return issues;
+
+      items.forEach(item => {
+        const searchSku = item.rawSku.toUpperCase();
+
+        if (this.isIgnored(item.rawSku, item.sku6, customerName)) return;
+
+        const stockData = this.fgStockData[searchSku] || { stock: 0, producible: 0 };
+        const availableStock = stockData.stock;
+        const producibleStock = stockData.producible;
+
+        if (availableStock < item.reqQty) {
+          const shortage = item.reqQty - availableStock;
+          const isCombo = searchSku.includes('/COM/');
+          const canProduce = producibleStock >= shortage && producibleStock > 0;
+
+          issues.push({
+            rawSku: item.rawSku,
+            sku6: item.sku6,
+            req: item.reqQty,
+            stock: availableStock,
+            shortage: shortage,
+            producible: producibleStock,
+            isCombo: isCombo,
+            canProduce: canProduce
+          });
+        }
+      });
+      return issues;
+    }
+  };
+  // =========================================================================
+
   // --- NAVIGATION ---
   const tabMap = {
     'groups': { sec: 'secGroups', ft: 'ftGroups', title: 'SCAN GROUPS' },
+    'warehouse': { sec: 'secWarehouse', ft: 'ftWarehouse', title: 'YB FG WAREHOUSE POs' },
     'auto': { sec: 'secAuto', ft: 'ftAuto', title: 'AUTO DASHBOARD' },
     'excel': { sec: 'secExcel', ft: 'ftExcel', title: 'EXCEL STATUS VIEWER' },
     'create': { sec: 'secCreateGroup', ft: 'ftCreateGroup', title: 'NEW GROUP' },
     'results': { sec: 'secResults', ft: 'ftResults', title: 'GROUP RESULTS' },
-    'export': { sec: 'secExport', ft: 'ftExport', title: 'BOX CALCULATOR' }
+    'export': { sec: 'secExport', ft: 'ftExport', title: 'BOX CALCULATOR' },
+    'rules': { sec: 'secRules', ft: 'ftRules', title: 'IGNORE RULES' }
   };
 
   function goView(viewName, activeTab = null) {
@@ -436,7 +675,7 @@ void (async () => {
       exitTimeout = setTimeout(() => {
         e.target.dataset.confirm = '0';
         e.target.innerHTML = '&#10005; EXIT';
-        e.target.style.background = ''; // Fallback to original via CSS
+        e.target.style.background = '';
       }, 3000);
     }
   };
@@ -461,7 +700,6 @@ void (async () => {
       const pct = g.total === 0 ? 0 : Math.round((g.completed / g.total) * 100);
       const isScanDone = g.completed >= g.total;
       
-      // Calculate remaining based on currentDispatchPOs using normalized strings
       const remaining = g.targets.filter(t => !state.currentDispatchPOs.has(normalizePO(t.po))).length;
 
       let statusClass = 'scanning';
@@ -495,15 +733,15 @@ void (async () => {
         </div>
       `;
     }).reverse().join(''); 
+
+    renderWarehouseTab();
   }
 
-  // Event Delegation for Groups Container (Open Group / Delete Group)
   $('rGroupListContainer').addEventListener('click', e => {
     const card = e.target.closest('.r-group-card');
     if (!card) return;
     const groupId = parseInt(card.dataset.id);
 
-    // Handle Delete
     if (e.target.closest('.del-group-btn')) {
        e.preventDefault();
        e.stopPropagation();
@@ -521,7 +759,7 @@ void (async () => {
          btn.style.color = 'var(--retro-bg)';
          
          setTimeout(() => {
-           if (btn.parentNode) { // Reset if user hasn't clicked yet and card still exists
+           if (btn.parentNode) {
              btn.dataset.confirm = '0';
              btn.textContent = oldText;
              btn.style.background = '';
@@ -532,13 +770,12 @@ void (async () => {
        return;
     }
 
-    // Handle Open
     openGroupResults(groupId);
   });
 
   // --- CREATE & BACKGROUND SCAN ---
   $('rStartManual').onclick = () => {
-    enableAntiSleep(); // Activate anti-sleep on user interaction
+    enableAntiSleep();
     const raw = $('rPOs').value;
     const label = ($('rLabel').value.trim().toUpperCase()) || 'MANUAL BATCH ' + (state.groups.length + 1);
     const orders = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
@@ -674,7 +911,7 @@ void (async () => {
   }
 
   $('rStartAuto').onclick = async function() {
-    enableAntiSleep(); // Activate anti-sleep on user interaction
+    enableAntiSleep();
     const btn = this;
     btn.disabled = true;
     btn.textContent = 'SCRAPING PAGES... PLEASE WAIT';
@@ -695,8 +932,6 @@ void (async () => {
           const viewBtn = row.querySelector('a.btn-primary[href*="-review"]');
           if (poCell && viewBtn) {
             const poNum = poCell.textContent.trim();
-            const href = viewBtn.getAttribute('href');
-            // Extract the true URL to avoid refetch later if possible
             allScraped.push(poNum);
           }
         });
@@ -728,13 +963,87 @@ void (async () => {
     renderGroupDetails(group);
   }
 
+  // ---- YB FG WAREHOUSE POs tab ----
+  function isPOInAnyGroup(poKey) {
+    return state.groups.some(g => g.targets.some(t => normalizePO(t.po) === poKey));
+  }
+
+  function renderWarehouseTab() {
+    const area = $('rWarehouseArea');
+    if (!area) return;
+
+    if (!state.warehousePOs || state.warehousePOs.length === 0) {
+      area.innerHTML = '<p class="r-hint" style="text-align:center; padding: 20px 0;">UPLOAD SALES ORDER REPORT TO SEE POs.</p>';
+      return;
+    }
+
+    // Newest first
+    const sorted = [...state.warehousePOs].sort((a, b) => parseBizeeDate(b.dateStrRaw) - parseBizeeDate(a.dateStrRaw));
+
+    let newCount = 0;
+    let html = '';
+    sorted.forEach(item => {
+      const poKey = normalizePO(item.poNo);
+      const inGroup = isPOInAnyGroup(poKey);
+      const isProcessed = state.currentDispatchPOs.has(poKey);
+      if (!inGroup && !isProcessed) newCount++;
+
+      let statusBadge = '';
+      if (isProcessed) statusBadge = `<span class="xl-badge st-done">PROCESSED</span>`;
+      else if (inGroup) statusBadge = `<span class="xl-badge" style="background:rgba(224,157,94,0.15); color:var(--retro-accent); border-color:var(--retro-accent);">IN GROUP</span>`;
+      else statusBadge = `<span class="xl-badge" style="background:rgba(140,184,122,0.15); color:var(--retro-green); border-color:var(--retro-green);">NEW</span>`;
+
+      html += `
+        <div class="wh-item">
+          <div class="wh-left">
+            <span class="wh-po">&#9658; ${item.poNo}</span>
+            <span class="wh-party">${item.party}</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+            <span class="wh-date">${item.dateStrRaw || ''}</span>
+            ${statusBadge}
+          </div>
+        </div>
+      `;
+    });
+
+    area.innerHTML = `<div class="r-hint" style="margin-bottom:10px;">${state.warehousePOs.length} TOTAL &middot; <span style="color:var(--retro-green)">${newCount} NEW</span></div>` + html;
+  }
+
+  $('rWhCreateGroup').onclick = () => {
+    const newPOs = state.warehousePOs.filter(item => {
+      const poKey = normalizePO(item.poNo);
+      return !isPOInAnyGroup(poKey) && !state.currentDispatchPOs.has(poKey);
+    }).map(item => item.poNo);
+
+    if (newPOs.length === 0) {
+      showNotice('NO NEW/UNPROCESSED POs TO ADD.', 'amber');
+      return;
+    }
+
+    const stamp = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+    startGroupScan(`YB FG WH - ${stamp}`, newPOs);
+    goView('groups', 'groups');
+    showNotice(`ADDED ${newPOs.length} NEW POs TO A SCAN GROUP`, 'green');
+  };
+
+  $('rWhCopyList').onclick = async () => {
+    const list = state.warehousePOs.map(item => item.poNo).join('\n');
+    if (!list) { showNotice('NOTHING TO COPY.', 'amber'); return; }
+    try {
+      await navigator.clipboard.writeText(list);
+      showNotice('PO NUMBERS COPIED.', 'green');
+    } catch (e) {
+      showNotice('COPY FAILED (CLIPBOARD BLOCKED).', 'red');
+    }
+  };
+
   // Helper to parse dates robustly (handles DD/MM/YYYY common in Indian ERPs)
   function parseBizeeDate(dStr) {
-    if (!dStr) return Number.MAX_SAFE_INTEGER; // Push items without dates to the very bottom
+    if (!dStr) return Number.MAX_SAFE_INTEGER;
     let s = String(dStr).trim();
     const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
     if (m) {
-      // Convert DD/MM/YYYY to YYYY-MM-DD for standard JS parsing
       const time = new Date(`${m[3]}-${m[2]}-${m[1]}`).getTime();
       return isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
     }
@@ -748,7 +1057,6 @@ void (async () => {
     const totalValue = found.reduce((sum, t) => sum + t.poTotal, 0);
     const avg = found.length ? (totalValue / found.length) : 0;
     
-    // Check remaining items based on strict PO match
     const remainingCount = group.targets.filter(t => !state.currentDispatchPOs.has(normalizePO(t.po))).length;
 
     let scanIndicator = group.completed < group.total ? `<div class="r-group-status scanning" style="margin-bottom:8px; font-family:'Press Start 2P', monospace; font-size:7px;">SCANNING (${group.completed}/${group.total})</div>` : '';
@@ -771,7 +1079,6 @@ void (async () => {
     if (found.length) {
       const groupedPOs = {};
       found.forEach(t => {
-        // Strict lookup based on normalized PO String
         const nKey = normalizePO(t.po);
         const meta = state.excelMeta[nKey];
         const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
@@ -783,7 +1090,6 @@ void (async () => {
       Object.keys(groupedPOs).sort().forEach(party => {
         listHtml += `<div class="xl-customer-name" style="margin-top:12px; font-size: 10px;">${party.toUpperCase()}</div>`;
         
-        // Sort POs within this customer by Date (Oldest to Newest)
         groupedPOs[party].sort((a, b) => {
            const metaA = state.excelMeta[normalizePO(a.po)] || {};
            const metaB = state.excelMeta[normalizePO(b.po)] || {};
@@ -794,18 +1100,36 @@ void (async () => {
           const nKeyItem = normalizePO(item.po);
           const isProcessed = state.currentDispatchPOs.has(nKeyItem);
           let badgeHtml = isProcessed ? `<span class="xl-badge st-done">[PROCESSED]</span>` : '';
-            
+
+          // ---- STOCK SHORTAGE INDICATOR ----
+          let stockIssueHtml = '';
+          if (state.showStockIssues) {
+              const stockIssues = StockIssueAnalyzer.getIssuesForPO(nKeyItem, party, isProcessed);
+              if (stockIssues.length > 0) {
+                  const issueLines = stockIssues.map(iss => {
+                      // Blue = a code that has enough Max Producible Qty to cover the shortfall (incl. /COM/ combos)
+                      if (iss.canProduce) {
+                          return `<div class="issue-line produce">&#9889; SKU:${iss.sku6} (REQ:${iss.req} &gt; STK:${iss.stock}) [CAN PRODUCE: ${iss.producible}]</div>`;
+                      }
+                      return `<div class="issue-line short">&#9888; SKU:${iss.sku6} (REQ:${iss.req} &gt; STK:${iss.stock})</div>`;
+                  });
+                  stockIssueHtml = issueLines.join('');
+              }
+          }
+          // -----------------------------------
+
           listHtml += `
             <a href="${item.reviewUrl}" target="_blank" class="r-link r-res-link" data-idx="${i}">
               <div class="r-link-top">
-                <div style="display:flex; align-items:center;">
+                <div style="display:flex; flex-direction:column; justify-content:center;">
                   <span>&#9658; ${item.po}</span>
                 </div>
-                <div style="display:flex; align-items:center; gap: 6px;">
+                <div style="display:flex; align-items:center; gap: 6px; flex-shrink: 0;">
                   ${badgeHtml}
                   <button class="r-btn secondary rescan-btn" data-po="${item.po}" style="padding: 2px 4px; font-size: 8px; width:auto;">RESCAN</button>
                 </div>
               </div>
+              ${stockIssueHtml}
             </a>
           `;
         });
@@ -813,7 +1137,6 @@ void (async () => {
       
       linksEl.innerHTML = listHtml;
       
-      // Mark as opened when clicked
       linksEl.querySelectorAll('.r-res-link').forEach(el => {
         el.onclick = (e) => {
           if(!e.target.closest('.rescan-btn')) {
@@ -839,13 +1162,16 @@ void (async () => {
       : '';
   }
 
-  // Reset Fades Feature (Un-clicks all faded links)
+  $('rToggleStockIssues').addEventListener('change', (e) => {
+    state.showStockIssues = e.target.checked;
+    refreshActiveViews();
+  });
+
   $('rResetFades').onclick = () => {
     document.querySelectorAll('.r-res-link.opened').forEach(el => el.classList.remove('opened'));
     showNotice('FADES RESET.', 'green');
   };
 
-  // Handle Rescanning Individual POs via delegation
   function triggerRescanPO(po) {
     const g = state.groups.find(x => x.id === state.activeGroupId);
     if (!g) return;
@@ -860,7 +1186,6 @@ void (async () => {
     }
   }
 
-  // Delegated events for Link List (Rescan individual Found POs)
   $('rLinkList').addEventListener('click', e => {
     const btn = e.target.closest('.rescan-btn');
     if (btn) {
@@ -870,7 +1195,6 @@ void (async () => {
     }
   });
 
-  // Delegated events for Not Found Area (Rescan individual Failed POs)
   $('rNotFoundArea').addEventListener('click', e => {
     const btn = e.target.closest('.rescan-btn');
     if (btn) {
@@ -880,7 +1204,6 @@ void (async () => {
     }
   });
 
-  // Rescan Entire Group
   $('rRescanGroup').onclick = () => {
     const g = state.groups.find(x => x.id === state.activeGroupId);
     if (g) {
@@ -919,6 +1242,109 @@ void (async () => {
   $('rToExport').onclick = () => goView('export', 'groups');
   $('rBackFromExport').onclick = () => goView('results', 'groups');
 
+  // ---- Stock Issues CSV Export: simple PO Number | Issues (ignored codes excluded) ----
+  $('rExportIssuesCsv').onclick = () => {
+    const group = state.groups.find(g => g.id === state.activeGroupId);
+    if (!group) { showNotice('OPEN A GROUP FIRST.', 'amber'); return; }
+
+    let csv = 'PO Number,Issues\n';
+    let rowCount = 0;
+
+    group.targets.filter(t => t.status === 'found').forEach(po => {
+        const cleanKey = normalizePO(po.po);
+        const meta = state.excelMeta[cleanKey] || {};
+        const party = meta.party || 'UNKNOWN CUSTOMER';
+        const isProcessed = state.currentDispatchPOs.has(cleanKey);
+
+        // isIgnored (global + customer) is already applied inside getIssuesForPO
+        const issues = StockIssueAnalyzer.getIssuesForPO(cleanKey, party, isProcessed);
+        issues.forEach(iss => {
+            csv += `"${po.po}","${iss.sku6.replace(/"/g, '""')}"\n`;
+            rowCount++;
+        });
+    });
+
+    if (rowCount === 0) {
+      showNotice('NO STOCK ISSUES TO EXPORT.', 'amber');
+      return;
+    }
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Stock_Issues_${group.name.replace(/[^a-z0-9]/gi, '_')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showNotice('STOCK ISSUES EXPORTED', 'green');
+  };
+
+  // ---- SO vs Dispatch FG Code Mismatch Export (XLSX) ----
+  // Matches strictly on Order ID (Sales Order Status file) <-> Sales Order (Pre-Invoicing Dispatch file),
+  // NOT on the customer-facing PO number, since PO numbers can rarely repeat across different orders.
+  $('rExportPickingXlsx').onclick = () => {
+    if (!window.XLSX) {
+      showNotice('EXCEL LIBRARY STILL LOADING. TRY AGAIN SHORTLY.', 'amber');
+      return;
+    }
+
+    const soKeys = Object.keys(state.soItemsByOrderId || {});
+    const dispatchKeys = Object.keys(state.dispatchItemsByOrderId || {});
+
+    if (soKeys.length === 0 || dispatchKeys.length === 0) {
+      showNotice('UPLOAD BOTH THE SALES ORDER STATUS FILE AND THE DISPATCH FILE FIRST.', 'amber');
+      return;
+    }
+
+    // Reverse-lookup: Order ID -> customer-facing PO Number, built from the SO Status upload
+    const orderIdToPoNo = {};
+    Object.entries(state.poNoToOrderId).forEach(([poNo, orderId]) => {
+      if (!orderIdToPoNo[orderId]) orderIdToPoNo[orderId] = poNo;
+    });
+
+    const allOrderIds = new Set([...soKeys, ...dispatchKeys]);
+    const rows = [];
+
+    allOrderIds.forEach(orderIdKey => {
+      const soEntry = state.soItemsByOrderId[orderIdKey];
+      const soSet = soEntry ? soEntry.codes : new Set();
+      const dispSet = state.dispatchItemsByOrderId[orderIdKey] || new Set();
+
+      const missingFromDispatch = [...soSet].filter(c => !dispSet.has(c));
+      const missingFromSO = [...dispSet].filter(c => !soSet.has(c));
+
+      if (missingFromDispatch.length === 0 && missingFromSO.length === 0) return;
+
+      const poNo = orderIdToPoNo[orderIdKey] || orderIdKey;
+      const party = soEntry ? soEntry.party : '';
+
+      missingFromDispatch.forEach(code => {
+        rows.push({ poNo, orderId: orderIdKey, party, code, missingFrom: 'Dispatch File' });
+      });
+      missingFromSO.forEach(code => {
+        rows.push({ poNo, orderId: orderIdKey, party, code, missingFrom: 'Sales Order Status' });
+      });
+    });
+
+    if (rows.length === 0) {
+      showNotice('NO MISMATCHES FOUND \u2014 ALL SKU ROWS MATCH.', 'green');
+      return;
+    }
+
+    rows.sort((a, b) => String(a.poNo).localeCompare(String(b.poNo)) || a.missingFrom.localeCompare(b.missingFrom));
+
+    const header = ['PO Number', 'Order ID', 'Customer Name', 'FG Code', 'Missing From'];
+    const aoa = [header, ...rows.map(r => [r.poNo, r.orderId, r.party, r.code, r.missingFrom])];
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'SKU Mismatch');
+    XLSX.writeFile(wb, `SKU_Mismatch_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showNotice(`MISMATCH REPORT DOWNLOADED (${rows.length} ROWS)`, 'green');
+  };
+
   function readExcelFile(file, labelId, processCallback, forceHeaderRow = null) {
     if (!file) return;
     $(labelId).textContent = 'LOADED: ' + file.name.toUpperCase();
@@ -940,13 +1366,11 @@ void (async () => {
         let headerRowIndex = forceHeaderRow; 
         
         if (headerRowIndex === null) {
-            // Auto-detect header row for BizeeBuy exports (skips title/metadata rows at the top)
             const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-            headerRowIndex = 0; // Fallback
+            headerRowIndex = 0;
             
             for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
                 if (Array.isArray(rawRows[i])) {
-                   // Count how many typical column headers appear in this row
                    let matchCount = 0;
                    const rowStr = rawRows[i].map(c => String(c).toLowerCase()).join(' ');
                    
@@ -955,9 +1379,8 @@ void (async () => {
                    if (rowStr.includes('date')) matchCount++;
                    if (rowStr.includes('status')) matchCount++;
                    if (rowStr.includes('amount') || rowStr.includes('total') || rowStr.includes('value')) matchCount++;
-                   if (rowStr.includes('item') || rowStr.includes('product') || rowStr.includes('qty')) matchCount++;
+                   if (rowStr.includes('item') || rowStr.includes('product') || rowStr.includes('qty') || rowStr.includes('code')) matchCount++;
                    
-                   // If we find 3 or more recognizable columns, this is definitively the header row
                    if (matchCount >= 3) {
                        headerRowIndex = i;
                        break;
@@ -978,29 +1401,29 @@ void (async () => {
 
   $('rSalesOrderInput').addEventListener('change', e => {
       readExcelFile(e.target.files[0], 'rSalesOrderName', processSalesOrderData, null);
-      e.target.value = ''; // Reset for re-uploads
+      e.target.value = '';
   });
 
   $('rDispatchInput').addEventListener('change', e => {
-      // Force header to index 1 (second row) for Dispatch Sheet as requested
       readExcelFile(e.target.files[0], 'rDispatchName', processDispatchData, 1);
-      e.target.value = ''; // Reset for re-uploads
+      e.target.value = '';
   });
 
-  // Helper to safely extract column values ensuring strict order of preference
-  const getColValue = (row, validKeys) => {
-    for (let v of validKeys) {
-        // Strip everything except letters and numbers for a purely alphanumeric comparison
-        const target = String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
-        for (let k in row) {
-            const currentKey = String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (currentKey === target) {
-                return row[k];
-            }
-        }
-    }
-    return null;
-  };
+  $('rFGInput').addEventListener('change', e => {
+      readExcelFile(e.target.files[0], 'rFGName', (data) => {
+          StockIssueAnalyzer.processFinishedGoodsData(data);
+          $('rExcelDataArea').style.display = 'block';
+          $('rExcelDataArea').innerHTML = `
+            <div class="r-info-box" style="text-align:center;">
+              &#10004; FINISHED GOODS PROCESSED.<br><br><b>${Object.keys(StockIssueAnalyzer.fgStockData).length}</b> SKUs UPDATED FOR STOCK ANALYSIS.
+            </div>
+          `;
+          refreshActiveViews();
+      }, null);
+      e.target.value = ''; 
+  });
+
+  const FG_CODE_KEYS = ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Item', 'Product'];
 
   function processSalesOrderData(data) {
     if (data.length === 0) {
@@ -1009,9 +1432,15 @@ void (async () => {
     }
 
     let updatedCount = 0;
-    
+
+    // Reset the strict Order-ID-based structures on every fresh upload
+    state.warehousePOs = [];
+    state.poNoToOrderId = {};
+    state.soItemsByOrderId = {};
+
+    const seenOrderIdForWarehouse = new Set();
+
     data.forEach(row => {
-        // Added extensive variations to catch BizeeBuy column names securely
         const refNo = String(getColValue(row, ['Reference Order No', 'Reference Order Number', 'Reference', 'PO No', 'PO Number', 'Customer PO', 'Order ID', 'Order No', 'Order Number', 'Ref No', 'Ref']) || '').trim();
         const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No', 'Order']) || '').trim();
         const party = getColValue(row, ['Party Name', 'Customer Name', 'Party', 'Sales Buyer', 'Customer', 'Buyer Name', 'Client Name']);
@@ -1020,19 +1449,55 @@ void (async () => {
         const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
 
         keys.forEach(poKey => {
-            // STRICT normalization to ensure exact matching between UI and Excel
             const cleanKey = normalizePO(poKey);
             if (!state.excelMeta[cleanKey]) state.excelMeta[cleanKey] = {};
             if (party) state.excelMeta[cleanKey].party = party;
             if (dateStrRaw) state.excelMeta[cleanKey].dateStrRaw = dateStrRaw;
+
+            // Route SO row data into the dedicated Stock Issue Analyzer module
+            StockIssueAnalyzer.processSalesOrderRow(cleanKey, row);
+
             updatedCount++;
         });
+
+        // ---- Strict Order ID handling (for the YB Warehouse tab & SO-vs-Dispatch diff) ----
+        const poNoRaw = String(getColValue(row, ['PO No']) || '').trim();
+        const orderIdRaw = String(getColValue(row, ['Order ID']) || '').trim();
+        const warehouseRaw = String(getColValue(row, ['Warehouse']) || '').trim();
+        const fgCode = getColValue(row, FG_CODE_KEYS);
+
+        if (orderIdRaw) {
+            const orderIdKey = normalizePO(orderIdRaw);
+
+            if (poNoRaw) state.poNoToOrderId[normalizePO(poNoRaw)] = orderIdKey;
+
+            if (!state.soItemsByOrderId[orderIdKey]) {
+                state.soItemsByOrderId[orderIdKey] = { party: party || '', codes: new Set() };
+            }
+            if (party) state.soItemsByOrderId[orderIdKey].party = party;
+            if (fgCode) state.soItemsByOrderId[orderIdKey].codes.add(String(fgCode).trim());
+
+            if (warehouseRaw.toLowerCase().includes(WAREHOUSE_FILTER) && !seenOrderIdForWarehouse.has(orderIdKey)) {
+                seenOrderIdForWarehouse.add(orderIdKey);
+                state.warehousePOs.push({
+                    poNo: poNoRaw || orderIdRaw,
+                    orderId: orderIdRaw,
+                    party: party || 'UNKNOWN CUSTOMER',
+                    dateStrRaw: dateStrRaw || '',
+                    warehouse: warehouseRaw
+                });
+            }
+        }
     });
+
+    updateCustomerDropdown();
+    renderWarehouseTab();
 
     $('rExcelDataArea').style.display = 'block';
     $('rExcelDataArea').innerHTML = `
       <div class="r-info-box" style="text-align:center;">
-        &#10004; SALES ORDER PROCESSED.<br><br>CUSTOMER INFO UPDATED FOR <b>${updatedCount}</b> ROWS.
+        &#10004; SALES ORDER PROCESSED.<br><br>CUSTOMER INFO & REQUIREMENTS EXTRACTED FOR <b>${updatedCount}</b> ROWS.<br>
+        <b>${state.warehousePOs.length}</b> POs FOUND FOR YB FG WAREHOUSE.
       </div>
     `;
     refreshActiveViews();
@@ -1044,13 +1509,12 @@ void (async () => {
         return;
     }
     
-    // Clear the set completely so it ONLY reflects the latest uploaded sheet
     state.currentDispatchPOs.clear();
+    state.dispatchItemsByOrderId = {};
     
     data.forEach(row => {
         const refNo = String(getColValue(row, ['Reference Order No', 'Reference Order Number', 'Reference', 'PO No', 'PO Number']) || '').trim();
         const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No']) || '').trim();
-        // Also opportunistically grab Party Name if we don't have it
         const party = getColValue(row, ['Party Name', 'Sales Buyer', 'Customer Name', 'Buyer Name']);
         
         const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
@@ -1063,7 +1527,19 @@ void (async () => {
                 state.excelMeta[cleanKey] = { party: party };
             }
         });
+
+        // ---- Strict "Sales Order" column handling (must match Order ID from the SO Status file) ----
+        const salesOrderRaw = String(getColValue(row, ['Sales Order']) || '').trim();
+        const fgCode = getColValue(row, FG_CODE_KEYS);
+        if (salesOrderRaw) {
+            const orderIdKey = normalizePO(salesOrderRaw);
+            if (!state.dispatchItemsByOrderId[orderIdKey]) state.dispatchItemsByOrderId[orderIdKey] = new Set();
+            if (fgCode) state.dispatchItemsByOrderId[orderIdKey].add(String(fgCode).trim());
+        }
     });
+
+    updateCustomerDropdown();
+    renderWarehouseTab();
 
     $('rExcelDataArea').style.display = 'block';
     $('rExcelDataArea').innerHTML = `
@@ -1074,6 +1550,36 @@ void (async () => {
     refreshActiveViews();
   }
 
+  function updateCustomerDropdown() {
+      const select = $('rCustSelect');
+      const currentVal = select.value;
+
+      const pinnedKeys = new Set(PINNED_CUSTOMERS.map(normCust));
+      const discovered = new Set();
+      Object.values(state.excelMeta).forEach(m => {
+          if (m.party && !pinnedKeys.has(normCust(m.party))) discovered.add(m.party);
+      });
+
+      select.innerHTML = '<option value="">-- SELECT CUSTOMER --</option>';
+
+      const pinnedGroup = document.createElement('optgroup');
+      pinnedGroup.label = 'COMMON CUSTOMERS';
+      PINNED_CUSTOMERS.forEach(c => pinnedGroup.appendChild(new Option(c, c)));
+      select.appendChild(pinnedGroup);
+
+      if (discovered.size > 0) {
+          const otherGroup = document.createElement('optgroup');
+          otherGroup.label = 'FROM UPLOADED FILES';
+          Array.from(discovered).sort().forEach(c => otherGroup.appendChild(new Option(c, c)));
+          select.appendChild(otherGroup);
+      }
+
+      // Restore previous selection if it still exists
+      const allValues = [...PINNED_CUSTOMERS, ...discovered].map(normCust);
+      if (allValues.includes(normCust(currentVal))) select.value = currentVal;
+  }
+  updateCustomerDropdown(); // populate pinned customers immediately, even before any upload
+
   function refreshActiveViews() {
     if (state.activeGroupId) {
         const activeGroup = state.groups.find(g => g.id === state.activeGroupId);
@@ -1081,6 +1587,72 @@ void (async () => {
     }
     renderGroups();
   }
+
+  // ---- Ignore Rules ----
+  $('rGlobalIgnore').addEventListener('input', (e) => {
+      const val = e.target.value;
+      StockIssueAnalyzer.globalIgnore = new Set(val.split(/[\n,]+/).map(s => String(s).trim().toUpperCase()).filter(Boolean));
+      refreshActiveViews();
+  });
+
+  const custDisplayNames = {}; // normalized key -> label shown to the user
+
+  $('btnAddCustRule').onclick = () => {
+      const cust = $('rCustSelect').value;
+      const skus = $('rCustIgnore').value;
+      if (!cust) return showNotice('SELECT A CUSTOMER FIRST', 'red');
+      const key = normCust(cust);
+
+      const skuSet = new Set(skus.split(/[\n,]+/).map(s => String(s).trim().toUpperCase()).filter(Boolean));
+      if (skuSet.size === 0) {
+          delete StockIssueAnalyzer.customerIgnore[key];
+          delete custDisplayNames[key];
+      } else {
+          StockIssueAnalyzer.customerIgnore[key] = skuSet;
+          custDisplayNames[key] = cust;
+      }
+      $('rCustIgnore').value = '';
+      renderCustRules();
+      refreshActiveViews();
+      showNotice('CUSTOMER RULE SAVED', 'green');
+  };
+
+  $('rCustSelect').addEventListener('change', () => {
+      const cust = $('rCustSelect').value;
+      const existing = StockIssueAnalyzer.customerIgnore[normCust(cust)];
+      $('rCustIgnore').value = existing ? Array.from(existing).join(', ') : '';
+  });
+
+  function renderCustRules() {
+      const list = $('rCustRulesList');
+      const entries = Object.keys(StockIssueAnalyzer.customerIgnore);
+      if (entries.length === 0) {
+          list.innerHTML = '<p class="r-hint">NO CUSTOMER-SPECIFIC RULES YET.</p>';
+          return;
+      }
+      let html = '';
+      entries.forEach(key => {
+          const label = custDisplayNames[key] || key;
+          const skus = Array.from(StockIssueAnalyzer.customerIgnore[key]).join(', ');
+          html += `<div class="r-rule-card">
+              <b>${label}</b>
+              <span class="skus">${skus}</span>
+              <button class="r-btn danger del-rule-btn" data-cust="${key.replace(/"/g, '&quot;')}" style="padding:3px 6px; font-size:7px; width:auto;">REMOVE</button>
+          </div>`;
+      });
+      list.innerHTML = html;
+
+      list.querySelectorAll('.del-rule-btn').forEach(btn => {
+          btn.onclick = (e) => {
+              const c = e.target.dataset.cust;
+              delete StockIssueAnalyzer.customerIgnore[c];
+              delete custDisplayNames[c];
+              renderCustRules();
+              refreshActiveViews();
+          };
+      });
+  }
+  renderCustRules();
 
   function parseCSV(text) {
     const rows = [];
@@ -1117,7 +1689,6 @@ void (async () => {
       const exportBtn = $('rExportBtn');
       const exportCustomerBtn = $('rExportCustomerBtn');
       
-      // AUTO DETECT SUCCESS VS MANUAL
       if (codeIdx > -1 && sizeIdx > -1) {
         $('rAutoSuccess').style.display = 'block';
         $('rManualMapping').style.display = 'none';
@@ -1192,7 +1763,6 @@ void (async () => {
       const customerData = {};
 
       group.targets.filter(t => t.status === 'found').forEach(po => {
-         // Normalized lookup to fetch strict party name from parsed excel data
          const cleanKey = normalizePO(po.po);
          const meta = state.excelMeta[cleanKey];
          const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
@@ -1206,7 +1776,6 @@ void (async () => {
 
       let grandTotalBoxes = 0;
       
-      // Sort customers alphabetically
       Object.keys(customerData).sort().forEach(party => {
           const items = customerData[party];
           
@@ -1225,7 +1794,6 @@ void (async () => {
       csv += `\n,,,OVERALL TOTAL BOXES,${(grandTotalBoxes % 1 === 0 ? grandTotalBoxes : grandTotalBoxes.toFixed(2))}\n`;
 
     } else {
-      // Existing Total Aggregation
       csv += 'Product Code,Total Order Qty,Case Size,Total Boxes Required\n';
       const aggregated = {};
       group.targets.filter(t => t.status === 'found').forEach(po => {
