@@ -151,7 +151,6 @@ void (async () => {
 
     .r-links { display: flex; flex-direction: column; gap: 6px; max-height: 250px; overflow-y: auto; margin-bottom: 6px; }
     
-    /* Modified Links Structure for Excel Data nested layout */
     .r-link {
       display: flex; flex-direction: column; align-items: stretch;
       padding: 8px 10px; background: var(--retro-dim); border: var(--px) solid var(--retro-border);
@@ -161,11 +160,6 @@ void (async () => {
     .r-link.opened { color: var(--retro-muted); border-color: var(--retro-dim); text-decoration: line-through; opacity: 0.6; }
     .r-link-top { display: flex; justify-content: space-between; align-items: center; width: 100%; }
     
-    .r-excel-matches { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--retro-border); display: flex; flex-direction: column; gap: 6px; }
-    .r-excel-match { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
-    .r-excel-match-left { display: flex; gap: 10px; color: var(--retro-muted); font-family: 'VT323', monospace; }
-    .r-excel-match-oid { color: var(--retro-purple); }
-
     .r-val-badge { background: rgba(224,157,94,0.15); color: var(--retro-accent); border: var(--px) solid rgba(224,157,94,0.4); padding: 2px 4px; font-size: 14px; }
 
     .r-warn-box { background: rgba(224,176,84,0.08); border: var(--px) solid var(--retro-amber); color: var(--retro-amber); padding: 8px 10px; font-size: 15px; margin-bottom: 10px; }
@@ -185,42 +179,38 @@ void (async () => {
     .r-file-drop input[type="file"] { display: none; }
     .r-file-drop p { margin: 0; color: var(--retro-muted); font-size: 16px; }
 
-    /* Group Cards */
     .r-group-card {
       background: var(--retro-dim); border: var(--px) solid var(--retro-border);
       padding: 10px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.1s;
       position: relative;
     }
     .r-group-card:hover { border-color: var(--retro-accent); }
-    .r-group-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-family: 'Press Start 2P', monospace; font-size: 8px; color: var(--retro-accent); }
+    .r-group-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-family: 'Press Start 2P', monospace; font-size: 8px; color: var(--retro-accent); align-items:center; }
     .r-group-status { color: var(--retro-muted); }
     .r-group-status.scanning { color: var(--retro-amber); animation: blink 1s step-end infinite; }
     .r-group-status.done { color: var(--retro-green); }
     .r-progress-bar-bg { background: var(--retro-bg); border: var(--px) solid var(--retro-border); height: 8px; overflow: hidden; width: 100%; }
     .r-progress-bar { height: 100%; background: var(--retro-accent); width: 0%; transition: width 0.2s; }
     
-    /* Excel Table Styles */
-    .xl-customer-group { margin-bottom: 16px; }
     .xl-customer-name { 
       font-family: 'Press Start 2P', monospace; font-size: 8px; color: var(--retro-accent); 
       border-bottom: var(--px) dashed var(--retro-border); padding-bottom: 4px; margin-bottom: 8px; 
     }
-    .xl-row { 
-      display: flex; justify-content: space-between; align-items: center; 
-      padding: 4px 0; font-size: 16px; border-bottom: 1px solid var(--retro-dim);
-    }
-    .xl-left { display: flex; gap: 10px; color: var(--retro-text); }
-    .xl-date { color: var(--retro-muted); }
     .xl-badge { padding: 2px 6px; font-size: 14px; border: var(--px) solid; }
-    
     .st-done { background: rgba(140,184,122,0.15); color: var(--retro-green); border-color: var(--retro-green); }
-    .st-cancelled { background: rgba(214,140,134,0.15); color: var(--retro-red); border-color: var(--retro-red); }
-    .st-closed { background: rgba(188,174,160,0.15); color: var(--retro-muted); border-color: var(--retro-muted); }
-    .st-issued { background: rgba(224,176,84,0.15); color: var(--retro-amber); border-color: var(--retro-amber); }
-    .st-wna { background: rgba(181,154,143,0.15); color: var(--retro-purple); border-color: var(--retro-purple); }
 
     .r-blink { animation: blink 1s step-end infinite; }
     @keyframes blink { 50% { opacity: 0; } }
+
+    /* Notice Overlay */
+    .r-notice-overlay {
+      position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+      background: var(--retro-panel); border: 2px solid var(--retro-amber); color: var(--retro-amber);
+      padding: 10px 20px; z-index: 9999999; box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+      font-family: 'Press Start 2P', monospace; font-size: 10px; text-align: center;
+      animation: notice-in 0.2s ease-out;
+    }
+    @keyframes notice-in { from { top: -20px; opacity: 0; } to { top: 20px; opacity: 1; } }
   `;
   document.head.appendChild(style);
 
@@ -228,7 +218,7 @@ void (async () => {
     <div class="r-header">
       <div class="r-title-row">
         <span style="font-size:12px">&#9658;</span>
-        <span id="rTitleText">PO SCANNER v2.2 PRO</span>
+        <span id="rTitleText">PO SCANNER v2.3 PRO</span>
       </div>
       <button class="r-close" id="rClose">&#10005; EXIT</button>
     </div>
@@ -286,11 +276,18 @@ void (async () => {
 
       <!-- EXCEL TAB -->
       <div class="r-section" id="secExcel">
-        <span class="r-scanline-label">UPLOAD .XLSX / .CSV STATUS REPORT</span>
-        <label class="r-file-drop" id="rExcelDrop">
-          <input type="file" id="rExcelInput" accept=".xlsx, .xls, .csv">
-          <p id="rExcelName">[ CLICK TO LOAD EXCEL FILE ]</p>
+        <span class="r-scanline-label">1. UPLOAD SALES ORDER REPORT (For Customer Info)</span>
+        <label class="r-file-drop" id="rSalesOrderDrop">
+          <input type="file" id="rSalesOrderInput" accept=".xlsx, .xls, .csv">
+          <p id="rSalesOrderName">[ CLICK TO LOAD SALES ORDER FILE ]</p>
         </label>
+
+        <span class="r-scanline-label">2. UPLOAD DISPATCH PLANNING SHEET (To Mark POs as Processed)</span>
+        <label class="r-file-drop" id="rDispatchDrop">
+          <input type="file" id="rDispatchInput" accept=".xlsx, .xls, .csv">
+          <p id="rDispatchName">[ CLICK TO LOAD DISPATCH SHEET ]</p>
+        </label>
+        
         <div id="rExcelDataArea" style="display:none; max-height: 400px; overflow-y:auto; padding-right:5px;"></div>
       </div>
 
@@ -331,7 +328,7 @@ void (async () => {
         <button class="r-btn success" id="rOpenAll">&#9658;&#9658; OPEN ALL FOUND ORDERS</button>
         <button class="r-btn primary" id="rToExport">&#8594; CALCULATE BOXES & EXPORT</button>
         <div class="r-btn-row">
-          <button class="r-btn amber" id="rResetFades">&#8634; RESET VIEWED</button>
+          <button class="r-btn amber" id="rRescanGroup">&#8635; RESCAN ENTIRE GROUP</button>
           <button class="r-btn secondary" id="rBackToGroups">&#8592; BACK TO GROUPS</button>
         </div>
       </div>
@@ -349,14 +346,26 @@ void (async () => {
 
   const $ = id => document.getElementById(id);
 
-  // --- STATE ---
   const state = {
     groups: [],
     activeGroupId: null,
     isScanning: false,
     parsedCSV: null,
-    dashboardAbort: false
+    dashboardAbort: false,
+    currentDispatchPOs: new Set(), // Tracks POs only from the LAST uploaded dispatch sheet
+    excelMeta: {} // Stores party and date data extracted from Excel
   };
+
+  // Safe notice mechanism to replace alert()
+  function showNotice(msg, type = 'amber') {
+    const div = document.createElement('div');
+    div.className = 'r-notice-overlay';
+    div.style.borderColor = `var(--retro-${type})`;
+    div.style.color = `var(--retro-${type})`;
+    div.textContent = msg;
+    $('po-tool-root').appendChild(div);
+    setTimeout(() => { if (div.parentNode) div.remove(); }, 3500);
+  }
 
   // --- NAVIGATION ---
   const tabMap = {
@@ -388,7 +397,6 @@ void (async () => {
 
   $('rClose').onclick = () => ui.remove();
 
-  // --- GROUPS LISTING ---
   $('btnShowCreateGroup').onclick = () => {
     $('rLabel').value = '';
     $('rPOs').value = '';
@@ -409,10 +417,8 @@ void (async () => {
       const pct = g.total === 0 ? 0 : Math.round((g.completed / g.total) * 100);
       const isScanDone = g.completed >= g.total;
       
-      const remaining = g.targets.filter(t => {
-        if (!t.excelMatches || t.excelMatches.length === 0) return true;
-        return !t.excelMatches.some(m => ['accepted', 'done'].includes(m.statusRaw));
-      }).length;
+      // Calculate remaining based on currentDispatchPOs
+      const remaining = g.targets.filter(t => !state.currentDispatchPOs.has(t.po)).length;
 
       let statusClass = 'scanning';
       let statusText = 'SCANNING...';
@@ -423,7 +429,7 @@ void (async () => {
           statusClass = 'done';
           statusText = 'DONE';
         } else {
-          statusClass = ''; // Remove animation class for stable text
+          statusClass = '';
           statusText = `${remaining} REMAINING`;
           statusStyle = 'color: var(--retro-amber);';
         }
@@ -433,7 +439,10 @@ void (async () => {
         <div class="r-group-card" data-id="${g.id}">
           <div class="r-group-header">
             <span>${g.name}</span>
-            <span class="r-group-status ${statusClass}" style="${statusStyle}">${statusText}</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+               <span class="r-group-status ${statusClass}" style="${statusStyle}">${statusText}</span>
+               <button class="r-btn danger del-group-btn" style="padding: 2px 6px; font-size: 7px; width:auto;">DEL</button>
+            </div>
           </div>
           <div class="r-progress-bar-bg"><div class="r-progress-bar" style="width:${pct}%"></div></div>
           <div style="font-size:14px; color:var(--retro-muted); margin-top:4px; font-family:'VT323', monospace;">
@@ -441,20 +450,35 @@ void (async () => {
           </div>
         </div>
       `;
-    }).reverse().join(''); // Show newest first
-
-    // Add click listeners to open group
-    container.querySelectorAll('.r-group-card').forEach(card => {
-      card.onclick = () => openGroupResults(parseInt(card.dataset.id));
-    });
+    }).reverse().join(''); 
   }
+
+  // Event Delegation for Groups Container (Open Group / Delete Group)
+  $('rGroupListContainer').addEventListener('click', e => {
+    const card = e.target.closest('.r-group-card');
+    if (!card) return;
+    const groupId = parseInt(card.dataset.id);
+
+    // Handle Delete
+    if (e.target.closest('.del-group-btn')) {
+       e.preventDefault();
+       e.stopPropagation();
+       state.groups = state.groups.filter(g => g.id !== groupId);
+       renderGroups();
+       showNotice('GROUP DELETED', 'red');
+       return;
+    }
+
+    // Handle Open
+    openGroupResults(groupId);
+  });
 
   // --- CREATE & BACKGROUND SCAN ---
   $('rStartManual').onclick = () => {
     const raw = $('rPOs').value;
     const label = ($('rLabel').value.trim().toUpperCase()) || 'MANUAL BATCH ' + (state.groups.length + 1);
     const orders = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-    if (!orders.length) { alert('ENTER AT LEAST ONE PO NUMBER.'); return; }
+    if (!orders.length) { showNotice('ENTER AT LEAST ONE PO NUMBER.', 'red'); return; }
     
     startGroupScan(label, orders);
     goView('groups', 'groups');
@@ -465,7 +489,7 @@ void (async () => {
     const group = {
       id: Date.now(),
       name: name,
-      targets: uniquePOs.map(po => ({ po, reviewUrl: null, status: 'pending', poTotal: 0, items: [], excelMatches: [] })),
+      targets: uniquePOs.map(po => ({ po, reviewUrl: null, status: 'pending', poTotal: 0, items: [] })),
       completed: 0,
       total: uniquePOs.length
     };
@@ -474,14 +498,12 @@ void (async () => {
     processQueue();
   }
 
-  // --- THE BACKGROUND PROCESSOR ---
   async function processQueue() {
     if (state.isScanning) return;
     state.isScanning = true;
 
     while (true) {
       let targetInfo = null;
-      // Find next pending target across all groups
       for (let g of state.groups) {
         let t = g.targets.find(x => x.status === 'pending');
         if (t) { targetInfo = { target: t, group: g }; break; }
@@ -489,24 +511,22 @@ void (async () => {
 
       if (!targetInfo) {
         state.isScanning = false;
-        break; // Queue empty
+        break; 
       }
 
       const { target, group } = targetInfo;
       target.status = 'scanning';
-      renderGroups(); // updates progress bar visually if on groups tab
+      renderGroups(); 
 
       await performSingleScan(target);
 
       group.completed++;
       renderGroups();
 
-      // If user is actively watching THIS group's results, update live
       if (state.activeGroupId === group.id) {
         renderGroupDetails(group);
       }
       
-      // Small delay to be polite to the server
       await new Promise(r => setTimeout(r, 200)); 
     }
   }
@@ -589,7 +609,6 @@ void (async () => {
     }
   }
 
-  // --- AUTO DASHBOARD SCAN (Feeds into Groups) ---
   $('rStartAuto').onclick = async function() {
     const btn = this;
     btn.disabled = true;
@@ -612,8 +631,8 @@ void (async () => {
           if (poCell && viewBtn) {
             const poNum = poCell.textContent.trim();
             const href = viewBtn.getAttribute('href');
-            const fullUrl = href.startsWith('http') ? href : BASE + href;
-            allScraped.push(poNum); // Just need the POs, scan logic handles the rest
+            // Extract the true URL to avoid refetch later if possible
+            allScraped.push(poNum);
           }
         });
         const nextLink = doc.querySelector('.pagination li.next:not(.disabled) a');
@@ -630,11 +649,10 @@ void (async () => {
       startGroupScan('AUTO DASHBOARD SCAN', allScraped);
       goView('groups', 'groups');
     } else {
-      alert('NO POs FOUND ON DASHBOARD.');
+      showNotice('NO POs FOUND ON DASHBOARD.', 'amber');
     }
   };
 
-  // --- GROUP DETAILS (RESULTS) ---
   function openGroupResults(groupId) {
     state.activeGroupId = groupId;
     const group = state.groups.find(g => g.id === groupId);
@@ -651,10 +669,7 @@ void (async () => {
     const totalValue = found.reduce((sum, t) => sum + t.poTotal, 0);
     const avg = found.length ? (totalValue / found.length) : 0;
     
-    const remainingCount = group.targets.filter(t => {
-      if (!t.excelMatches || t.excelMatches.length === 0) return true;
-      return !t.excelMatches.some(m => ['accepted', 'done'].includes(m.statusRaw));
-    }).length;
+    const remainingCount = group.targets.filter(t => !state.currentDispatchPOs.has(t.po)).length;
 
     let scanIndicator = group.completed < group.total ? `<div class="r-group-status scanning" style="margin-bottom:8px; font-family:'Press Start 2P', monospace; font-size:7px;">SCANNING (${group.completed}/${group.total})</div>` : '';
 
@@ -676,35 +691,20 @@ void (async () => {
     if (found.length) {
       const groupedPOs = {};
       found.forEach(t => {
-        const party = t.partyName || 'UNKNOWN CUSTOMER';
+        // Fetch partyName from excelMeta if available, fallback to UNKNOWN
+        const meta = state.excelMeta[t.po];
+        const party = meta ? meta.party : 'UNKNOWN CUSTOMER';
         if (!groupedPOs[party]) groupedPOs[party] = [];
         groupedPOs[party].push(t);
       });
-
-      for (let party in groupedPOs) {
-        groupedPOs[party].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-      }
 
       let listHtml = '';
       Object.keys(groupedPOs).sort().forEach(party => {
         listHtml += `<div class="xl-customer-name" style="margin-top:12px; font-size: 10px;">${party.toUpperCase()}</div>`;
         
         groupedPOs[party].forEach((item, i) => {
-          let excelHtml = '';
-          if (item.excelMatches && item.excelMatches.length > 0) {
-            excelHtml = `<div class="r-excel-matches">`;
-            item.excelMatches.forEach(m => {
-              const oidHtml = (m.orderId && m.orderId !== item.po) ? `<span class="r-excel-match-oid">ORD: ${m.orderId}</span>` : '';
-              const dateHtml = m.date ? `<span>[${m.date}]</span>` : `<span>[NO DATE]</span>`;
-              excelHtml += `
-                <div class="r-excel-match">
-                  <div class="r-excel-match-left">${dateHtml} ${oidHtml}</div>
-                  <div>${m.badge}</div>
-                </div>
-              `;
-            });
-            excelHtml += `</div>`;
-          }
+          const isProcessed = state.currentDispatchPOs.has(item.po);
+          let badgeHtml = isProcessed ? `<span class="xl-badge st-done">[PROCESSED]</span>` : '';
             
           listHtml += `
             <a href="${item.reviewUrl}" target="_blank" class="r-link r-res-link" data-idx="${i}">
@@ -712,8 +712,11 @@ void (async () => {
                 <div style="display:flex; align-items:center;">
                   <span>&#9658; ${item.po}</span>
                 </div>
+                <div style="display:flex; align-items:center; gap: 6px;">
+                  ${badgeHtml}
+                  <button class="r-btn secondary rescan-btn" data-po="${item.po}" style="padding: 2px 4px; font-size: 8px; width:auto;">RESCAN</button>
+                </div>
               </div>
-              ${excelHtml}
             </a>
           `;
         });
@@ -721,17 +724,78 @@ void (async () => {
       
       linksEl.innerHTML = listHtml;
       
+      // Mark as opened when clicked
       linksEl.querySelectorAll('.r-res-link').forEach(el => {
-        el.onclick = () => el.classList.add('opened');
+        el.onclick = (e) => {
+          if(!e.target.closest('.rescan-btn')) {
+             el.classList.add('opened');
+          }
+        };
       });
     } else {
       linksEl.innerHTML = '<p style="text-align:center;color:var(--retro-red);font-family:\'Press Start 2P\',monospace;font-size:8px;padding:20px 0">NO ORDERS FOUND YET</p>';
     }
 
     $('rNotFoundArea').innerHTML = notFound.length
-      ? `<details style="margin-top:8px"><div class="r-not-found"><summary>${notFound.length} NOT FOUND</summary><div class="r-not-found-list">${notFound.map(n=>n.po).join('<br>')}</div></div></details>`
+      ? `<details style="margin-top:8px"><div class="r-not-found"><summary>${notFound.length} NOT FOUND (CLICK TO VIEW)</summary>
+          <div class="r-not-found-list">
+             ${notFound.map(n => `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; border-bottom:1px dashed rgba(214,140,134,0.3); padding-bottom:4px;">
+                   <span>${n.po}</span>
+                   <button class="r-btn secondary rescan-btn" data-po="${n.po}" style="padding:2px 4px; font-size:8px; width:auto; color:var(--retro-text);">RESCAN</button>
+                </div>
+             `).join('')}
+          </div>
+         </div></details>`
       : '';
   }
+
+  // Handle Rescanning Individual POs via delegation
+  function triggerRescanPO(po) {
+    const g = state.groups.find(x => x.id === state.activeGroupId);
+    if (!g) return;
+    const t = g.targets.find(x => x.po === po);
+    if (t && (t.status === 'found' || t.status === 'notfound')) {
+      g.completed = Math.max(0, g.completed - 1);
+      t.status = 'pending';
+      t.reviewUrl = null;
+      renderGroupDetails(g);
+      showNotice(`QUEUED RESCAN FOR ${po}`, 'green');
+      processQueue();
+    }
+  }
+
+  // Delegated events for Link List (Rescan individual Found POs)
+  $('rLinkList').addEventListener('click', e => {
+    const btn = e.target.closest('.rescan-btn');
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerRescanPO(btn.dataset.po);
+    }
+  });
+
+  // Delegated events for Not Found Area (Rescan individual Failed POs)
+  $('rNotFoundArea').addEventListener('click', e => {
+    const btn = e.target.closest('.rescan-btn');
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerRescanPO(btn.dataset.po);
+    }
+  });
+
+  // Rescan Entire Group
+  $('rRescanGroup').onclick = () => {
+    const g = state.groups.find(x => x.id === state.activeGroupId);
+    if (g) {
+      g.completed = 0;
+      g.targets.forEach(t => { t.status = 'pending'; t.reviewUrl = null; });
+      renderGroupDetails(g);
+      showNotice(`RESCANNING BATCH: ${g.name}`, 'amber');
+      processQueue();
+    }
+  };
 
   $('rOpenAll').onclick = async function() {
     const group = state.groups.find(g => g.id === state.activeGroupId);
@@ -757,23 +821,16 @@ void (async () => {
     btn.disabled = false;
   };
 
-  $('rResetFades').onclick = () => {
-    document.querySelectorAll('.r-res-link.opened').forEach(el => el.classList.remove('opened'));
-  };
 
   $('rToExport').onclick = () => goView('export', 'groups');
   $('rBackFromExport').onclick = () => goView('results', 'groups');
 
-
-  // --- EXCEL FILE IMPORT & VIEWER ---
-  $('rExcelInput').addEventListener('change', e => {
-    const file = e.target.files[0];
+  function readExcelFile(file, labelId, processCallback, forceHeaderRow = null) {
     if (!file) return;
-    $('rExcelName').textContent = 'LOADED: ' + file.name.toUpperCase();
+    $(labelId).textContent = 'LOADED: ' + file.name.toUpperCase();
     
     if(!window.XLSX) {
-        alert("Excel Library is still loading. Please try again in a few seconds.");
-        e.target.value = '';
+        showNotice("Excel Library is still loading. Please try again in a few seconds.", "amber");
         return;
     }
 
@@ -786,60 +843,45 @@ void (async () => {
         const worksheet = workbook.Sheets[firstSheetName];
         if(!worksheet) throw new Error("No worksheet found in file.");
         
-        // Dynamically find the header row by looking for "PO No", "PO Number", or "Order ID"
-        const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        let headerRowIndex = 0;
+        let headerRowIndex = forceHeaderRow; 
         
-        for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
-            if (Array.isArray(rawRows[i]) && rawRows[i].some(cell => String(cell).includes('PO No') || String(cell).includes('PO Number') || String(cell).includes('Order ID'))) {
-                headerRowIndex = i;
-                break;
+        if (headerRowIndex === null) {
+            // Auto-detect header row for unknown structures
+            const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+            headerRowIndex = 1; // Fallback
+            for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+                if (Array.isArray(rawRows[i]) && rawRows[i].some(cell => {
+                   const str = String(cell).toLowerCase();
+                   return str.includes('po no') || str.includes('reference order') || str.includes('sales order') || str.includes('order id');
+                })) {
+                    headerRowIndex = i;
+                    break;
+                }
             }
         }
         
-        // raw:false forces sheet_to_json to return numbers/dates formatted as strings exactly as they appear in Excel
         const json = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "", raw: false });
-        processExcelData(json);
+        processCallback(json);
       } catch(err) {
         console.error("Excel Parse Error:", err);
-        alert("Failed to parse Excel file. Error: " + err.message);
-      } finally {
-        e.target.value = ''; // Reset input to allow re-uploading the same file if needed
+        showNotice("Failed to parse Excel file.", "red");
       }
     };
     reader.readAsArrayBuffer(file);
-  });
-
-  function parseDateStr(ds) {
-    if(!ds) return 0;
-    const str = String(ds).trim();
-    if(str === 'N/A' || str === '') return 0;
-    
-    // Check if it's already a numeric serial date (e.g. 45100)
-    if (!isNaN(str) && Number(str) > 30000) {
-        return Number(str);
-    }
-    
-    // Try YYYY-MM-DD or DD-MM-YYYY or MM/DD/YYYY
-    const parts = str.split(/[-/]/); 
-    if (parts.length === 3) {
-        if (parts[0].length === 4) {
-             // YYYY-MM-DD
-             return new Date(parts[0], parts[1]-1, parts[2]).getTime();
-        } else if (parts[2].length === 4) {
-             // DD-MM-YYYY (or MM/DD/YYYY depending on region, but falling back to standard parsing works)
-             return new Date(parts[2], parts[1]-1, parts[0]).getTime();
-        }
-    }
-    
-    // Fallback parser
-    const parsed = Date.parse(str);
-    if (!isNaN(parsed)) return parsed;
-
-    return 0;
   }
 
-  // Helper to safely extract column values ensuring strict order of preference!
+  $('rSalesOrderInput').addEventListener('change', e => {
+      readExcelFile(e.target.files[0], 'rSalesOrderName', processSalesOrderData, null);
+      e.target.value = ''; // Reset for re-uploads
+  });
+
+  $('rDispatchInput').addEventListener('change', e => {
+      // Force header to index 1 (second row) for Dispatch Sheet as requested
+      readExcelFile(e.target.files[0], 'rDispatchName', processDispatchData, 1);
+      e.target.value = ''; // Reset for re-uploads
+  });
+
+  // Helper to safely extract column values ensuring strict order of preference
   const getColValue = (row, validKeys) => {
     for (let v of validKeys) {
         const target = v.toLowerCase();
@@ -852,104 +894,82 @@ void (async () => {
     return null;
   };
 
-  function processExcelData(data) {
-    const area = $('rExcelDataArea');
-    area.style.display = 'block';
-    
+  function processSalesOrderData(data) {
     if (data.length === 0) {
-        area.innerHTML = '<p class="r-hint" style="text-align:center;">NO DATA FOUND IN EXCEL.</p>';
+        showNotice("NO DATA FOUND IN SALES ORDER EXCEL.", "amber");
         return;
     }
 
-    const poExcelData = {}; // Dictionary mapping PO to an Array of Matches
+    let updatedCount = 0;
     
     data.forEach(row => {
-        // Extract Keys: PO No preferred over Order ID
-        const poNo = getColValue(row, ['PO No', 'PO Number']);
-        const orderId = getColValue(row, ['Order ID']);
-        const poKey = String(poNo || orderId || '').trim();
+        const refNo = String(getColValue(row, ['Reference Order Number', 'Reference', 'PO No', 'PO Number', 'Order ID']) || '').trim();
+        const soNo = String(getColValue(row, ['Sales Order']) || '').trim();
+        const party = getColValue(row, ['Party Name', 'Customer Name', 'Party', 'Sales Buyer']);
+        const dateStrRaw = getColValue(row, ['Order Date', 'Date', 'Requested At']);
 
-        if (poKey) {
-            const party = getColValue(row, ['Party Name', 'Customer Name', 'Party']) || 'UNKNOWN CUSTOMER';
-            const dateStrRaw = getColValue(row, ['Order Date', 'Date']);
-            const ts = parseDateStr(dateStrRaw);
-            let formattedDate = '';
-            
-            // Generate DD.MM.YY format
-            if (ts > 0) {
-                const d = new Date(ts);
-                formattedDate = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth()+1).padStart(2, '0')}.${String(d.getFullYear()).slice(-2)}`;
-            }
-            
-            const statusRaw = getColValue(row, ['SO Status', 'Status']);
-            const sLower = String(statusRaw || '').trim().toLowerCase();
-            let badgeHtml = '';
-            
-            if (sLower === 'accepted' || sLower === 'done') {
-                badgeHtml = `<span class="xl-badge st-done">${statusRaw || 'Done'}</span>`;
-            } else if (sLower === 'cancelled') {
-                badgeHtml = `<span class="xl-badge st-cancelled">${statusRaw || 'Cancelled'}</span>`;
-            } else if (sLower === 'closed') {
-                badgeHtml = `<span class="xl-badge st-closed">${statusRaw || 'Closed'}</span>`;
-            } else if (sLower === 'issued') {
-                badgeHtml = `<span class="xl-badge st-issued">${statusRaw || 'Issued'}</span>`;
-            } else if (sLower === 'warehouse not assigned' || sLower === 'warehouse_not_assigned') {
-                badgeHtml = `<span class="xl-badge st-wna">${statusRaw || 'Wh. Not Assigned'}</span>`;
-            } else if (sLower === 'raised' || sLower === '') {
-                badgeHtml = ``;
-            } else {
-                badgeHtml = `<span class="xl-badge" style="color:var(--retro-muted)">${String(statusRaw)}</span>`;
-            }
+        const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
 
-            if (!poExcelData[poKey]) {
-                poExcelData[poKey] = [];
-            }
-            
-            // Prevent exact duplicates if Excel has repeated rows identically
-            const isDup = poExcelData[poKey].some(m => m.orderId === String(orderId||'').trim() && m.date === formattedDate && m.statusRaw === sLower);
-            
-            if (!isDup) {
-               poExcelData[poKey].push({
-                   orderId: String(orderId || '').trim(),
-                   date: formattedDate,
-                   timestamp: ts,
-                   partyName: party,
-                   badge: badgeHtml,
-                   statusRaw: sLower
-               });
-            }
-        }
+        keys.forEach(poKey => {
+            if (!state.excelMeta[poKey]) state.excelMeta[poKey] = {};
+            if (party) state.excelMeta[poKey].party = party;
+            if (dateStrRaw) state.excelMeta[poKey].dateStrRaw = dateStrRaw;
+            updatedCount++;
+        });
     });
 
-    let updatedCount = 0;
-    // Enrich existing Groups Data globally
-    state.groups.forEach(group => {
-        group.targets.forEach(t => {
-            const poKey = String(t.po).trim();
-            if (poExcelData[poKey]) {
-                t.excelMatches = poExcelData[poKey]; // Assign array of matching rows to the target
-                t.partyName = poExcelData[poKey][0].partyName; // Assign main party for grouping
-                t.timestamp = poExcelData[poKey][0].timestamp; // Assign main timestamp for sorting
-                updatedCount++;
+    $('rExcelDataArea').style.display = 'block';
+    $('rExcelDataArea').innerHTML = `
+      <div class="r-info-box" style="text-align:center;">
+        &#10004; SALES ORDER PROCESSED.<br><br>CUSTOMER INFO UPDATED FOR <b>${updatedCount}</b> ROWS.
+      </div>
+    `;
+    refreshActiveViews();
+  }
+
+  function processDispatchData(data) {
+    if (data.length === 0) {
+        showNotice("NO DATA FOUND IN DISPATCH SHEET.", "amber");
+        return;
+    }
+    
+    // Clear the set completely so it ONLY reflects the latest uploaded sheet
+    state.currentDispatchPOs.clear();
+    
+    data.forEach(row => {
+        const refNo = String(getColValue(row, ['Reference Order Number', 'Reference']) || '').trim();
+        const soNo = String(getColValue(row, ['Sales Order']) || '').trim();
+        // Also opportunistically grab Party Name if we don't have it
+        const party = getColValue(row, ['Sales Buyer', 'Customer Name', 'Party Name']);
+        
+        const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
+        
+        keys.forEach(poKey => {
+            state.currentDispatchPOs.add(poKey);
+            
+            if (party && !state.excelMeta[poKey]) {
+                state.excelMeta[poKey] = { party: party };
             }
         });
     });
 
-    area.innerHTML = `
+    $('rExcelDataArea').style.display = 'block';
+    $('rExcelDataArea').innerHTML = `
       <div class="r-info-box" style="text-align:center;">
-        &#10004; EXCEL DATA LOADED.<br><br>UPDATED <b>${updatedCount}</b> MATCHING PO(s) IN YOUR GROUPS.
+        &#10004; DISPATCH SHEET PROCESSED.<br><br><b>${state.currentDispatchPOs.size}</b> POs MARKED AS PROCESSED.
       </div>
     `;
+    refreshActiveViews();
+  }
 
-    // Force re-render of active group details immediately to show new Excel data layout
+  function refreshActiveViews() {
     if (state.activeGroupId) {
         const activeGroup = state.groups.find(g => g.id === state.activeGroupId);
         if (activeGroup) renderGroupDetails(activeGroup);
     }
+    renderGroups();
   }
 
-
-  // --- CSV EXPORT (BOX CALCULATION) ---
   function parseCSV(text) {
     const rows = [];
     let row = [], inQ = false, val = '';
@@ -974,7 +994,7 @@ void (async () => {
     const reader = new FileReader();
     reader.onload = ev => {
       const rows = parseCSV(ev.target.result);
-      if (rows.length < 2) { alert('CSV INVALID OR EMPTY'); return; }
+      if (rows.length < 2) { showNotice('CSV INVALID OR EMPTY', 'red'); return; }
       state.parsedCSV = rows;
       const headers = rows[0];
       
@@ -1010,7 +1030,6 @@ void (async () => {
   $('rExportBtn').onclick = (e) => {
     let codeIdx, sizeIdx;
     
-    // Check if auto-detected using dataset
     if (e.target.dataset.codeIdx !== undefined) {
       codeIdx = parseInt(e.target.dataset.codeIdx);
       sizeIdx = parseInt(e.target.dataset.sizeIdx);
