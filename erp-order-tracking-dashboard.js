@@ -327,6 +327,7 @@ void (async () => {
       <div id="ftResults" style="display:none; flex-direction:column; gap:6px;">
         <button class="r-btn success" id="rOpenAll">&#9658;&#9658; OPEN ALL FOUND ORDERS</button>
         <button class="r-btn primary" id="rToExport">&#8594; CALCULATE BOXES & EXPORT</button>
+        <button class="r-btn secondary" id="rResetFades">&#8634; RESET FADES (UN-CLICK ALL)</button>
         <div class="r-btn-row">
           <button class="r-btn amber" id="rRescanGroup">&#8635; RESCAN ENTIRE GROUP</button>
           <button class="r-btn secondary" id="rBackToGroups">&#8592; BACK TO GROUPS</button>
@@ -356,6 +357,9 @@ void (async () => {
     currentDispatchPOs: new Set(), // Tracks POs only from the LAST uploaded dispatch sheet
     excelMeta: {} // Stores party and date data extracted from Excel
   };
+
+  // Robust normalizer for all PO lookups
+  const normalizePO = (po) => String(po).trim().toUpperCase();
 
   let wakeLock = null;
   let antiSleepAudio = null;
@@ -457,8 +461,8 @@ void (async () => {
       const pct = g.total === 0 ? 0 : Math.round((g.completed / g.total) * 100);
       const isScanDone = g.completed >= g.total;
       
-      // Calculate remaining based on currentDispatchPOs
-      const remaining = g.targets.filter(t => !state.currentDispatchPOs.has(t.po)).length;
+      // Calculate remaining based on currentDispatchPOs using normalized strings
+      const remaining = g.targets.filter(t => !state.currentDispatchPOs.has(normalizePO(t.po))).length;
 
       let statusClass = 'scanning';
       let statusText = 'SCANNING...';
@@ -724,13 +728,28 @@ void (async () => {
     renderGroupDetails(group);
   }
 
+  // Helper to parse dates robustly (handles DD/MM/YYYY common in Indian ERPs)
+  function parseBizeeDate(dStr) {
+    if (!dStr) return Number.MAX_SAFE_INTEGER; // Push items without dates to the very bottom
+    let s = String(dStr).trim();
+    const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (m) {
+      // Convert DD/MM/YYYY to YYYY-MM-DD for standard JS parsing
+      const time = new Date(`${m[3]}-${m[2]}-${m[1]}`).getTime();
+      return isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
+    }
+    const t = new Date(s).getTime();
+    return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+  }
+
   function renderGroupDetails(group) {
     const found = group.targets.filter(t => t.status === 'found');
     const notFound = group.targets.filter(t => t.status === 'notfound');
     const totalValue = found.reduce((sum, t) => sum + t.poTotal, 0);
     const avg = found.length ? (totalValue / found.length) : 0;
     
-    const remainingCount = group.targets.filter(t => !state.currentDispatchPOs.has(t.po)).length;
+    // Check remaining items based on strict PO match
+    const remainingCount = group.targets.filter(t => !state.currentDispatchPOs.has(normalizePO(t.po))).length;
 
     let scanIndicator = group.completed < group.total ? `<div class="r-group-status scanning" style="margin-bottom:8px; font-family:'Press Start 2P', monospace; font-size:7px;">SCANNING (${group.completed}/${group.total})</div>` : '';
 
@@ -752,9 +771,10 @@ void (async () => {
     if (found.length) {
       const groupedPOs = {};
       found.forEach(t => {
-        // Fetch partyName from excelMeta if available, fallback to UNKNOWN
-        const meta = state.excelMeta[t.po];
-        const party = meta ? meta.party : 'UNKNOWN CUSTOMER';
+        // Strict lookup based on normalized PO String
+        const nKey = normalizePO(t.po);
+        const meta = state.excelMeta[nKey];
+        const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
         if (!groupedPOs[party]) groupedPOs[party] = [];
         groupedPOs[party].push(t);
       });
@@ -763,8 +783,16 @@ void (async () => {
       Object.keys(groupedPOs).sort().forEach(party => {
         listHtml += `<div class="xl-customer-name" style="margin-top:12px; font-size: 10px;">${party.toUpperCase()}</div>`;
         
+        // Sort POs within this customer by Date (Oldest to Newest)
+        groupedPOs[party].sort((a, b) => {
+           const metaA = state.excelMeta[normalizePO(a.po)] || {};
+           const metaB = state.excelMeta[normalizePO(b.po)] || {};
+           return parseBizeeDate(metaA.dateStrRaw) - parseBizeeDate(metaB.dateStrRaw);
+        });
+
         groupedPOs[party].forEach((item, i) => {
-          const isProcessed = state.currentDispatchPOs.has(item.po);
+          const nKeyItem = normalizePO(item.po);
+          const isProcessed = state.currentDispatchPOs.has(nKeyItem);
           let badgeHtml = isProcessed ? `<span class="xl-badge st-done">[PROCESSED]</span>` : '';
             
           listHtml += `
@@ -810,6 +838,12 @@ void (async () => {
          </div></details>`
       : '';
   }
+
+  // Reset Fades Feature (Un-clicks all faded links)
+  $('rResetFades').onclick = () => {
+    document.querySelectorAll('.r-res-link.opened').forEach(el => el.classList.remove('opened'));
+    showNotice('FADES RESET.', 'green');
+  };
 
   // Handle Rescanning Individual POs via delegation
   function triggerRescanPO(po) {
@@ -882,7 +916,6 @@ void (async () => {
     btn.disabled = false;
   };
 
-
   $('rToExport').onclick = () => goView('export', 'groups');
   $('rBackFromExport').onclick = () => goView('results', 'groups');
 
@@ -907,16 +940,28 @@ void (async () => {
         let headerRowIndex = forceHeaderRow; 
         
         if (headerRowIndex === null) {
-            // Auto-detect header row for unknown structures
+            // Auto-detect header row for BizeeBuy exports (skips title/metadata rows at the top)
             const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-            headerRowIndex = 1; // Fallback
-            for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
-                if (Array.isArray(rawRows[i]) && rawRows[i].some(cell => {
-                   const str = String(cell).toLowerCase();
-                   return str.includes('po no') || str.includes('reference order') || str.includes('sales order') || str.includes('order id');
-                })) {
-                    headerRowIndex = i;
-                    break;
+            headerRowIndex = 0; // Fallback
+            
+            for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
+                if (Array.isArray(rawRows[i])) {
+                   // Count how many typical column headers appear in this row
+                   let matchCount = 0;
+                   const rowStr = rawRows[i].map(c => String(c).toLowerCase()).join(' ');
+                   
+                   if (rowStr.includes('order')) matchCount++;
+                   if (rowStr.includes('party') || rowStr.includes('customer') || rowStr.includes('buyer')) matchCount++;
+                   if (rowStr.includes('date')) matchCount++;
+                   if (rowStr.includes('status')) matchCount++;
+                   if (rowStr.includes('amount') || rowStr.includes('total') || rowStr.includes('value')) matchCount++;
+                   if (rowStr.includes('item') || rowStr.includes('product') || rowStr.includes('qty')) matchCount++;
+                   
+                   // If we find 3 or more recognizable columns, this is definitively the header row
+                   if (matchCount >= 3) {
+                       headerRowIndex = i;
+                       break;
+                   }
                 }
             }
         }
@@ -945,9 +990,11 @@ void (async () => {
   // Helper to safely extract column values ensuring strict order of preference
   const getColValue = (row, validKeys) => {
     for (let v of validKeys) {
-        const target = v.toLowerCase();
+        // Strip everything except letters and numbers for a purely alphanumeric comparison
+        const target = String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
         for (let k in row) {
-            if (String(k).trim().toLowerCase() === target) {
+            const currentKey = String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (currentKey === target) {
                 return row[k];
             }
         }
@@ -964,17 +1011,20 @@ void (async () => {
     let updatedCount = 0;
     
     data.forEach(row => {
-        const refNo = String(getColValue(row, ['Reference Order Number', 'Reference', 'PO No', 'PO Number', 'Order ID']) || '').trim();
-        const soNo = String(getColValue(row, ['Sales Order']) || '').trim();
-        const party = getColValue(row, ['Party Name', 'Customer Name', 'Party', 'Sales Buyer']);
+        // Added extensive variations to catch BizeeBuy column names securely
+        const refNo = String(getColValue(row, ['Reference Order No', 'Reference Order Number', 'Reference', 'PO No', 'PO Number', 'Customer PO', 'Order ID', 'Order No', 'Order Number', 'Ref No', 'Ref']) || '').trim();
+        const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No', 'Order']) || '').trim();
+        const party = getColValue(row, ['Party Name', 'Customer Name', 'Party', 'Sales Buyer', 'Customer', 'Buyer Name', 'Client Name']);
         const dateStrRaw = getColValue(row, ['Order Date', 'Date', 'Requested At']);
 
         const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
 
         keys.forEach(poKey => {
-            if (!state.excelMeta[poKey]) state.excelMeta[poKey] = {};
-            if (party) state.excelMeta[poKey].party = party;
-            if (dateStrRaw) state.excelMeta[poKey].dateStrRaw = dateStrRaw;
+            // STRICT normalization to ensure exact matching between UI and Excel
+            const cleanKey = normalizePO(poKey);
+            if (!state.excelMeta[cleanKey]) state.excelMeta[cleanKey] = {};
+            if (party) state.excelMeta[cleanKey].party = party;
+            if (dateStrRaw) state.excelMeta[cleanKey].dateStrRaw = dateStrRaw;
             updatedCount++;
         });
     });
@@ -998,18 +1048,19 @@ void (async () => {
     state.currentDispatchPOs.clear();
     
     data.forEach(row => {
-        const refNo = String(getColValue(row, ['Reference Order Number', 'Reference']) || '').trim();
-        const soNo = String(getColValue(row, ['Sales Order']) || '').trim();
+        const refNo = String(getColValue(row, ['Reference Order No', 'Reference Order Number', 'Reference', 'PO No', 'PO Number']) || '').trim();
+        const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No']) || '').trim();
         // Also opportunistically grab Party Name if we don't have it
-        const party = getColValue(row, ['Sales Buyer', 'Customer Name', 'Party Name']);
+        const party = getColValue(row, ['Party Name', 'Sales Buyer', 'Customer Name', 'Buyer Name']);
         
         const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
         
         keys.forEach(poKey => {
-            state.currentDispatchPOs.add(poKey);
+            const cleanKey = normalizePO(poKey);
+            state.currentDispatchPOs.add(cleanKey);
             
-            if (party && !state.excelMeta[poKey]) {
-                state.excelMeta[poKey] = { party: party };
+            if (party && !state.excelMeta[cleanKey]) {
+                state.excelMeta[cleanKey] = { party: party };
             }
         });
     });
@@ -1141,8 +1192,9 @@ void (async () => {
       const customerData = {};
 
       group.targets.filter(t => t.status === 'found').forEach(po => {
-         // Lookup party name from parsed excel data
-         const meta = state.excelMeta[po.po];
+         // Normalized lookup to fetch strict party name from parsed excel data
+         const cleanKey = normalizePO(po.po);
+         const meta = state.excelMeta[cleanKey];
          const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
          
          if (!customerData[party]) customerData[party] = {};
