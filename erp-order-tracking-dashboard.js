@@ -487,23 +487,47 @@ void (async () => {
 
       try {
         let foundUrl = target.reviewUrl;
+        
+        // --- FIX IMPLEMENTED HERE ---
         if (!foundUrl) {
           const url = BASE + '/sales-order-dashboard?SalesOrderSearch[sales_order_id]=' + encodeURIComponent(target.po);
           const res = await fetch(url, { credentials: 'include' });
-          const html = await res.text();
-          const doc = new DOMParser().parseFromString(html, 'text/html');
-          const cells = Array.from(doc.querySelectorAll('td[data-col-seq="7"]'));
-          for (const cell of cells) {
-            if (cell.textContent.trim() === target.po) {
-              const eyeBtn = cell.closest('tr').querySelector('a[href*="-review"]');
-              if (eyeBtn) {
-                const href = eyeBtn.getAttribute('href');
-                foundUrl = href.startsWith('http') ? href : BASE + href;
-                break;
+          
+          // Fix 1: Catch automatic redirects directly to the review page
+          if (res.url && res.url.includes('-review')) {
+            foundUrl = res.url;
+          } else {
+            const html = await res.text();
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            
+            // Fix 2: Search ALL td cells instead of just column 7, use .includes for invisible chars
+            const cells = Array.from(doc.querySelectorAll('td'));
+            for (const cell of cells) {
+              const text = cell.textContent.trim();
+              if (text === target.po || text.includes(target.po)) {
+                const eyeBtn = cell.closest('tr')?.querySelector('a[href*="-review"]');
+                if (eyeBtn) {
+                  const href = eyeBtn.getAttribute('href');
+                  foundUrl = href.startsWith('http') ? href : BASE + href;
+                  break;
+                }
               }
+            }
+            
+            // Fix 3: Fallback - if search returned exactly 1 order row, just use it
+            if (!foundUrl) {
+               const rows = doc.querySelectorAll('#biz-grid-list table tbody tr.biz-grid-list');
+               if (rows.length === 1) { 
+                   const anyEyeBtn = rows[0].querySelector('a[href*="-review"]');
+                   if (anyEyeBtn) {
+                       const href = anyEyeBtn.getAttribute('href');
+                       foundUrl = href.startsWith('http') ? href : BASE + href;
+                   }
+               }
             }
           }
         }
+        // --- END FIX ---
 
         if (foundUrl) {
           const reviewRes = await fetch(foundUrl, { credentials: 'include' });
@@ -728,7 +752,7 @@ void (async () => {
         if (k.toLowerCase() === lower || lower.includes(k.toLowerCase()) || k.toLowerCase().includes(lower)) return caseMap[k];
       }
       return null;
-    };
+    }
 
     const aggregated = {};
     state.foundPOs.forEach(po => {
