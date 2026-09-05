@@ -334,7 +334,8 @@ void (async () => {
       </div>
 
       <div id="ftExport" style="display:none; flex-direction:column; gap:6px;">
-        <button class="r-btn success" id="rExportBtn" disabled>&#8595; GENERATE FINAL REPORT</button>
+        <button class="r-btn success" id="rExportBtn" disabled>&#8595; GENERATE FINAL REPORT (TOTALS)</button>
+        <button class="r-btn primary" id="rExportCustomerBtn" disabled>&#8595; GENERATE CUSTOMER-WISE REPORT</button>
         <button class="r-btn secondary" id="rBackFromExport">&#8592; BACK TO RESULTS</button>
       </div>
       
@@ -355,6 +356,30 @@ void (async () => {
     currentDispatchPOs: new Set(), // Tracks POs only from the LAST uploaded dispatch sheet
     excelMeta: {} // Stores party and date data extracted from Excel
   };
+
+  let wakeLock = null;
+  let antiSleepAudio = null;
+
+  async function enableAntiSleep() {
+    // 1. Request Screen Wake Lock
+    try {
+      if ('wakeLock' in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+      }
+    } catch (err) {
+      console.warn("Wake lock failed:", err);
+    }
+
+    // 2. Silent Audio Loop (Forces browser to keep background tab active)
+    if (!antiSleepAudio) {
+      antiSleepAudio = document.createElement('audio');
+      // Tiny 1-second silent WAV encoded in base64
+      antiSleepAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+      antiSleepAudio.loop = true;
+      antiSleepAudio.volume = 0; 
+      antiSleepAudio.play().catch(() => console.log("Audio play blocked; needs user interaction"));
+    }
+  }
 
   // Safe notice mechanism to replace alert()
   function showNotice(msg, type = 'amber') {
@@ -395,7 +420,22 @@ void (async () => {
     });
   });
 
-  $('rClose').onclick = () => ui.remove();
+  let exitTimeout;
+  $('rClose').onclick = (e) => {
+    if (e.target.dataset.confirm === '1') {
+      ui.remove();
+    } else {
+      e.target.dataset.confirm = '1';
+      e.target.innerHTML = 'SURE?';
+      e.target.style.background = 'var(--retro-amber)';
+      clearTimeout(exitTimeout);
+      exitTimeout = setTimeout(() => {
+        e.target.dataset.confirm = '0';
+        e.target.innerHTML = '&#10005; EXIT';
+        e.target.style.background = ''; // Fallback to original via CSS
+      }, 3000);
+    }
+  };
 
   $('btnShowCreateGroup').onclick = () => {
     $('rLabel').value = '';
@@ -463,9 +503,28 @@ void (async () => {
     if (e.target.closest('.del-group-btn')) {
        e.preventDefault();
        e.stopPropagation();
-       state.groups = state.groups.filter(g => g.id !== groupId);
-       renderGroups();
-       showNotice('GROUP DELETED', 'red');
+       const btn = e.target.closest('.del-group-btn');
+       
+       if (btn.dataset.confirm === '1') {
+         state.groups = state.groups.filter(g => g.id !== groupId);
+         renderGroups();
+         showNotice('GROUP DELETED', 'red');
+       } else {
+         btn.dataset.confirm = '1';
+         const oldText = btn.textContent;
+         btn.textContent = 'SURE?';
+         btn.style.background = 'var(--retro-amber)';
+         btn.style.color = 'var(--retro-bg)';
+         
+         setTimeout(() => {
+           if (btn.parentNode) { // Reset if user hasn't clicked yet and card still exists
+             btn.dataset.confirm = '0';
+             btn.textContent = oldText;
+             btn.style.background = '';
+             btn.style.color = '';
+           }
+         }, 3000);
+       }
        return;
     }
 
@@ -475,6 +534,7 @@ void (async () => {
 
   // --- CREATE & BACKGROUND SCAN ---
   $('rStartManual').onclick = () => {
+    enableAntiSleep(); // Activate anti-sleep on user interaction
     const raw = $('rPOs').value;
     const label = ($('rLabel').value.trim().toUpperCase()) || 'MANUAL BATCH ' + (state.groups.length + 1);
     const orders = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
@@ -610,6 +670,7 @@ void (async () => {
   }
 
   $('rStartAuto').onclick = async function() {
+    enableAntiSleep(); // Activate anti-sleep on user interaction
     const btn = this;
     btn.disabled = true;
     btn.textContent = 'SCRAPING PAGES... PLEASE WAIT';
@@ -1003,6 +1064,7 @@ void (async () => {
       
       $('rMappingArea').style.display = 'block';
       const exportBtn = $('rExportBtn');
+      const exportCustomerBtn = $('rExportCustomerBtn');
       
       // AUTO DETECT SUCCESS VS MANUAL
       if (codeIdx > -1 && sizeIdx > -1) {
@@ -1010,6 +1072,8 @@ void (async () => {
         $('rManualMapping').style.display = 'none';
         exportBtn.dataset.codeIdx = codeIdx;
         exportBtn.dataset.sizeIdx = sizeIdx;
+        exportCustomerBtn.dataset.codeIdx = codeIdx;
+        exportCustomerBtn.dataset.sizeIdx = sizeIdx;
       } else {
         $('rAutoSuccess').style.display = 'none';
         $('rManualMapping').style.display = 'block';
@@ -1021,13 +1085,16 @@ void (async () => {
         });
         delete exportBtn.dataset.codeIdx;
         delete exportBtn.dataset.sizeIdx;
+        delete exportCustomerBtn.dataset.codeIdx;
+        delete exportCustomerBtn.dataset.sizeIdx;
       }
       exportBtn.disabled = false;
+      exportCustomerBtn.disabled = false;
     };
     reader.readAsText(file);
   });
 
-  $('rExportBtn').onclick = (e) => {
+  const handleExportClick = (e, isCustomerWise) => {
     let codeIdx, sizeIdx;
     
     if (e.target.dataset.codeIdx !== undefined) {
@@ -1038,10 +1105,13 @@ void (async () => {
       sizeIdx = parseInt($('rSizeCol').value);
     }
     
-    generateReport(codeIdx, sizeIdx);
+    generateReport(codeIdx, sizeIdx, isCustomerWise, e.target);
   };
 
-  function generateReport(codeIdx, sizeIdx) {
+  $('rExportBtn').onclick = (e) => handleExportClick(e, false);
+  $('rExportCustomerBtn').onclick = (e) => handleExportClick(e, true);
+
+  function generateReport(codeIdx, sizeIdx, isCustomerWise, btnEl) {
     const group = state.groups.find(g => g.id === state.activeGroupId);
     if (!group) return;
 
@@ -1063,44 +1133,82 @@ void (async () => {
       return null;
     }
 
-    const aggregated = {};
-    group.targets.filter(t => t.status === 'found').forEach(po => {
-      po.items.forEach(item => {
-        aggregated[item.code] = (aggregated[item.code] || 0) + item.qty;
-      });
-    });
-
     let csv = `GROUP: ${group.name}\n`;
     csv += 'Total POs Parsed,' + group.targets.filter(t=>t.status==='found').length + '\n\n';
-    csv += 'Product Code,Total Order Qty,Case Size,Total Boxes Required\n';
 
-    let grandTotal = 0;
-    for (const [code, totalQty] of Object.entries(aggregated)) {
-      const cs = getCaseSize(code);
-      let boxes = 'SIZE NOT FOUND';
-      if (cs) {
-        const raw = totalQty / cs;
-        boxes = raw % 1 === 0 ? raw.toString() : raw.toFixed(2);
-        grandTotal += raw;
+    if (isCustomerWise) {
+      csv += 'Customer Name,Product Code,Total Order Qty,Case Size,Total Boxes Required\n';
+      const customerData = {};
+
+      group.targets.filter(t => t.status === 'found').forEach(po => {
+         // Lookup party name from parsed excel data
+         const meta = state.excelMeta[po.po];
+         const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
+         
+         if (!customerData[party]) customerData[party] = {};
+         
+         po.items.forEach(item => {
+           customerData[party][item.code] = (customerData[party][item.code] || 0) + item.qty;
+         });
+      });
+
+      let grandTotalBoxes = 0;
+      
+      // Sort customers alphabetically
+      Object.keys(customerData).sort().forEach(party => {
+          const items = customerData[party];
+          
+          for (const [code, totalQty] of Object.entries(items)) {
+              const cs = getCaseSize(code);
+              let boxes = 'SIZE NOT FOUND';
+              if (cs) {
+                  const raw = totalQty / cs;
+                  boxes = raw % 1 === 0 ? raw.toString() : raw.toFixed(2);
+                  grandTotalBoxes += raw;
+              }
+              csv += `"${party.replace(/"/g, '""')}","${code.replace(/"/g, '""')}",${totalQty},${cs || 'N/A'},${boxes}\n`;
+          }
+      });
+      
+      csv += `\n,,,OVERALL TOTAL BOXES,${(grandTotalBoxes % 1 === 0 ? grandTotalBoxes : grandTotalBoxes.toFixed(2))}\n`;
+
+    } else {
+      // Existing Total Aggregation
+      csv += 'Product Code,Total Order Qty,Case Size,Total Boxes Required\n';
+      const aggregated = {};
+      group.targets.filter(t => t.status === 'found').forEach(po => {
+        po.items.forEach(item => {
+          aggregated[item.code] = (aggregated[item.code] || 0) + item.qty;
+        });
+      });
+
+      let grandTotal = 0;
+      for (const [code, totalQty] of Object.entries(aggregated)) {
+        const cs = getCaseSize(code);
+        let boxes = 'SIZE NOT FOUND';
+        if (cs) {
+          const raw = totalQty / cs;
+          boxes = raw % 1 === 0 ? raw.toString() : raw.toFixed(2);
+          grandTotal += raw;
+        }
+        csv += '"' + code.replace(/"/g, '""') + '",' + totalQty + ',' + (cs || 'N/A') + ',' + boxes + '\n';
       }
-      csv += '"' + code.replace(/"/g, '""') + '",' + totalQty + ',' + (cs || 'N/A') + ',' + boxes + '\n';
+      csv += '\n,,OVERALL TOTAL BOXES,' + (grandTotal % 1 === 0 ? grandTotal : grandTotal.toFixed(2)) + '\n';
     }
-    csv += '\n,,OVERALL TOTAL BOXES,' + (grandTotal % 1 === 0 ? grandTotal : grandTotal.toFixed(2)) + '\n';
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'Box_Report_' + group.name.replace(/[^a-z0-9]/gi, '_') + '.csv';
+    a.download = (isCustomerWise ? 'Customer_Box_Report_' : 'Total_Box_Report_') + group.name.replace(/[^a-z0-9]/gi, '_') + '.csv';
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
 
-    const btn = $('rExportBtn');
-    const old = btn.innerHTML;
-    btn.innerHTML = '\u2714 DOWNLOADED!';
-    setTimeout(() => { btn.innerHTML = old; }, 2500);
+    const old = btnEl.innerHTML;
+    btnEl.innerHTML = '\u2714 DOWNLOADED!';
+    setTimeout(() => { btnEl.innerHTML = old; }, 2500);
   }
 
 })();
