@@ -40,7 +40,10 @@ style.innerHTML = `
   background: var(--retro-accent); color: var(--retro-bg); padding: 8px 12px;
   display: flex; align-items: center; justify-content: space-between;
   flex-shrink: 0; font-family: 'Press Start 2P', monospace; font-size: 9px; letter-spacing: 0.5px;
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
 }
+#po-tool-root.dragging .r-header { cursor: grabbing; }
+#po-tool-root.dragging, #po-tool-root.dragging * { user-select: none !important; }
 .r-title-row { display: flex; align-items: center; gap: 10px; }
 .r-close {
   background: var(--retro-red); border: none; color: #fff;
@@ -191,7 +194,7 @@ style.innerHTML = `
 document.head.appendChild(style);
 
 ui.innerHTML = `
-<div class="r-header">
+<div class="r-header" title="DRAG TO MOVE">
   <div class="r-title-row">
     <span style="font-size:12px">&#9658;</span>
     <span id="rTitleText">PO SCANNER v2.6 PRO (STOCK + RULES)</span>
@@ -220,7 +223,7 @@ ui.innerHTML = `
   <!-- YB FG WAREHOUSE POs -->
   <div class="r-section" id="secWarehouse">
     <span class="r-scanline-label">POs FROM SALES ORDER STATUS &mdash; WAREHOUSE = YB FG WAREHOUSE</span>
-    <p class="r-hint">Upload the Sales Order Status Report in the Excel tab first. Shows <b>today's</b> YB FG Warehouse POs grouped by customer (use the toggle for all dates). CLOSED + PROCESSED POs are excluded from new scan groups.</p>
+    <p class="r-hint">Upload the Sales Order Status Report in the Excel tab first. Shows <b>today's</b> YB FG Warehouse POs grouped by customer (toggle for all dates).</p>
     <div id="rWarehouseArea">
       <p class="r-hint" style="text-align:center; padding: 20px 0;">UPLOAD SALES ORDER REPORT TO SEE POs.</p>
     </div>
@@ -350,8 +353,8 @@ ui.innerHTML = `
 `;
 
 const $ = id => document.getElementById(id);
-
 const STORAGE_KEY = 'poScannerState_v2_6';
+const POS_KEY = 'poScannerPanelPos_v1';
 
 const state = {
   groups: [],
@@ -362,14 +365,14 @@ const state = {
   currentDispatchPOs: new Set(),
   excelMeta: {},
   showStockIssues: true,
-  hideDonePOs: false,               // NEW: hide processed/closed clutter
-  warehouseShowAllDates: false,     // NEW: warehouse tab defaults to TODAY only
+  hideDonePOs: false,
+  warehouseShowAllDates: false,
   warehousePOs: [],
   poNoToOrderId: {},
   soItemsByOrderId: {},
   dispatchItemsByOrderId: {},
-  poStatusByPO: {},                 // NEW: normalized PO -> SO Status ('Closed', 'Raised', ...)
-  poOrderIds: {}                    // NEW: normalized PO -> Set(Order IDs) for multi-order detection
+  poStatusByPO: {},
+  poOrderIds: {}
 };
 
 const normalizePO = (po) => String(po).trim().toUpperCase();
@@ -387,6 +390,82 @@ const PINNED_CUSTOMERS = [
   'Zepto Limited'
 ];
 const WAREHOUSE_FILTER = 'yb fg warehouse';
+
+// =========================================================================
+// DRAGGABLE PANEL — grab the header bar to move; position is remembered
+// =========================================================================
+function clampPanel(left, top) {
+  const w = ui.offsetWidth || 620;
+  const maxLeft = Math.max(0, window.innerWidth - w);
+  const maxTop = Math.max(0, window.innerHeight - 40); // header always reachable
+  return {
+    left: Math.min(Math.max(0, left), maxLeft),
+    top: Math.min(Math.max(0, top), maxTop)
+  };
+}
+
+function applyPanelPos(left, top) {
+  const p = clampPanel(left, top);
+  ui.style.left = p.left + 'px';
+  ui.style.top = p.top + 'px';
+  ui.style.right = 'auto';
+  ui.style.bottom = 'auto';
+}
+
+(function initDrag() {
+  const header = ui.querySelector('.r-header');
+  if (!header) return;
+
+  // Restore last saved position (clamped to current screen size)
+  try {
+    const raw = localStorage.getItem(POS_KEY);
+    if (raw) {
+      const pos = JSON.parse(raw);
+      if (typeof pos.left === 'number' && typeof pos.top === 'number') applyPanelPos(pos.left, pos.top);
+    }
+  } catch (e) {}
+
+  let dragging = false, startX = 0, startY = 0, origLeft = 0, origTop = 0;
+
+  header.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.r-close')) return; // never drag from the EXIT button
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    dragging = true;
+    const rect = ui.getBoundingClientRect();
+    origLeft = rect.left;
+    origTop = rect.top;
+    startX = e.clientX;
+    startY = e.clientY;
+    ui.classList.add('dragging');
+    try { header.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+
+  header.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    applyPanelPos(origLeft + (e.clientX - startX), origTop + (e.clientY - startY));
+  });
+
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    ui.classList.remove('dragging');
+    try { header.releasePointerCapture(e.pointerId); } catch (err) {}
+    try {
+      const rect = ui.getBoundingClientRect();
+      localStorage.setItem(POS_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
+    } catch (err) {}
+  };
+  header.addEventListener('pointerup', endDrag);
+  header.addEventListener('pointercancel', endDrag);
+
+  // Keep the panel on-screen if the browser window is resized
+  window.addEventListener('resize', () => {
+    if (ui.style.left) {
+      const rect = ui.getBoundingClientRect();
+      applyPanelPos(rect.left, rect.top);
+    }
+  });
+})();
 
 // =========================================================================
 // ANTI-SLEEP ENGINE (Wake Lock + silent audio + Web Worker heartbeat)
@@ -548,7 +627,6 @@ function resetAllData() {
   Object.keys(custDisplayNames).forEach(k => delete custDisplayNames[k]);
 }
 
-// Safe notice mechanism
 function showNotice(msg, type = 'amber') {
   const div = document.createElement('div');
   div.className = 'r-notice-overlay';
@@ -569,45 +647,6 @@ const getColValue = (row, validKeys) => {
   }
   return null;
 };
-
-// =========================================================================
-// DATE HELPERS (handles M/D/YY, D/M/YYYY etc.) + TODAY detection
-// =========================================================================
-function parseBizeeDate(dStr) {
-  if (!dStr) return Number.MAX_SAFE_INTEGER;
-  const s = String(dStr).trim();
-  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-  if (m) {
-    const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
-    let y = parseInt(m[3], 10); if (y < 100) y += 2000;
-    let day, mon;
-    if (a > 12) { day = a; mon = b; }        // must be DD/MM
-    else if (b > 12) { mon = a; day = b; }   // must be MM/DD
-    else { day = a; mon = b; }               // ambiguous -> keep legacy DD/MM
-    const t = new Date(y, mon - 1, day).getTime();
-    return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
-  }
-  const t = new Date(s).getTime();
-  return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
-}
-
-function isTodayDate(dStr) {
-  const t = parseBizeeDate(dStr);
-  if (t === Number.MAX_SAFE_INTEGER) return false;
-  const d = new Date(t), now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-}
-
-// =========================================================================
-// PO DISPOSITION: 'closed' (SO Status) > 'processed' (dispatch sheet) > 'open'
-// =========================================================================
-const getPODisposition = (poKey) => {
-  const st = state.poStatusByPO[poKey];
-  if (st && String(st).toLowerCase() === 'closed') return 'closed';
-  if (state.currentDispatchPOs.has(poKey)) return 'processed';
-  return 'open';
-};
-const isPODone = (poKey) => getPODisposition(poKey) !== 'open';
 
 // =========================================================================
 // Stock Issue Analysis Engine (unchanged core)
@@ -653,7 +692,7 @@ const StockIssueAnalyzer = {
   },
   getIssuesForPO: function(poNumber, customerName, isProcessed) {
     const issues = [];
-    if (isProcessed) return issues; // covers both PROCESSED and CLOSED now
+    if (isProcessed) return issues;
     const items = this.salesOrderItems[poNumber];
     if (!items) return issues;
     if (Object.keys(this.fgStockData).length === 0) return issues;
@@ -674,6 +713,45 @@ const StockIssueAnalyzer = {
     return issues;
   }
 };
+
+// =========================================================================
+// PO DISPOSITION: 'closed' (SO Status) > 'processed' (dispatch sheet) > 'open'
+// =========================================================================
+const getPODisposition = (poKey) => {
+  const st = state.poStatusByPO[poKey];
+  if (st && String(st).toLowerCase() === 'closed') return 'closed';
+  if (state.currentDispatchPOs.has(poKey)) return 'processed';
+  return 'open';
+};
+const isPODone = (poKey) => getPODisposition(poKey) !== 'open';
+
+// =========================================================================
+// DATE HELPERS (handles M/D/YY, D/M/YYYY etc.) + TODAY detection
+// =========================================================================
+function parseBizeeDate(dStr) {
+  if (!dStr) return Number.MAX_SAFE_INTEGER;
+  const s = String(dStr).trim();
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (m) {
+    const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+    let y = parseInt(m[3], 10); if (y < 100) y += 2000;
+    let day, mon;
+    if (a > 12) { day = a; mon = b; }
+    else if (b > 12) { mon = a; day = b; }
+    else { day = a; mon = b; }
+    const t = new Date(y, mon - 1, day).getTime();
+    return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+  }
+  const t = new Date(s).getTime();
+  return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+}
+
+function isTodayDate(dStr) {
+  const t = parseBizeeDate(dStr);
+  if (t === Number.MAX_SAFE_INTEGER) return false;
+  const d = new Date(t), now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
 
 // =========================================================================
 // NAVIGATION
@@ -804,23 +882,59 @@ $('rGroupListContainer').addEventListener('click', e => {
   openGroupResults(groupId);
 });
 
-// CLEAR SAVED DATA
+// =========================================================================
+// CLEAR SAVED DATA — SAFE 4-STEP CONFIRMATION
+// =========================================================================
 $('btnClearSaved').onclick = (e) => {
   const btn = e.currentTarget;
-  if (btn.dataset.confirm === '1') {
+  const RESET_LABEL = '&#8635; CLEAR SAVED DATA (FULL RESET)';
+  const STEP_LABELS = [
+    '',
+    '&#9888; STEP 1 OF 4 — SURE? CLICK AGAIN',
+    '&#9888; STEP 2 OF 4 — ALL GROUPS + SCANS WILL BE WIPED',
+    '&#9888; STEP 3 OF 4 — EXCEL DATA & RULES TOO. FINAL CLICK NEXT'
+  ];
+  const step = parseInt(btn.dataset.confirm || '0', 10);
+  clearTimeout(btn._resetTimer);
+
+  const abortToNormal = () => {
+    if (btn.parentNode) {
+      btn.dataset.confirm = '0';
+      btn.innerHTML = RESET_LABEL;
+      btn.style.background = '';
+      btn.style.color = '';
+    }
+  };
+
+  if (step >= 3) {
+    btn.dataset.confirm = '0';
+    btn.innerHTML = RESET_LABEL;
+    btn.style.background = '';
+    btn.style.color = '';
     try { localStorage.removeItem(STORAGE_KEY); } catch (err) {}
     resetAllData();
-    renderGroups(); renderWarehouseTab(); updateCustomerDropdown(); renderCustRules();
-    $('rExcelDataArea').style.display = 'none';
+    saveState();
+    renderGroups();
+    renderWarehouseTab();
+    updateCustomerDropdown();
+    renderCustRules();
     $('rGlobalIgnore').value = '';
-    btn.dataset.confirm = '0';
-    btn.innerHTML = '&#8635; CLEAR SAVED DATA (FULL RESET)';
-    showNotice('ALL SAVED DATA CLEARED', 'red');
-  } else {
-    btn.dataset.confirm = '1';
-    btn.innerHTML = 'SURE? CLICK AGAIN TO WIPE';
-    setTimeout(() => { if (btn.parentNode) { btn.dataset.confirm = '0'; btn.innerHTML = '&#8635; CLEAR SAVED DATA (FULL RESET)'; } }, 3000);
+    $('rExcelDataArea').style.display = 'none';
+    $('rSalesOrderName').textContent = '[ CLICK TO LOAD BizeeBuy Sales Order Status Report... ]';
+    $('rDispatchName').textContent = '[ CLICK TO LOAD DISPATCH SHEET ]';
+    $('rFGName').textContent = '[ CLICK TO LOAD Finished Goods Excel (3).xls ]';
+    showNotice('FULL RESET COMPLETE (4/4 CONFIRMED)', 'red');
+    return;
   }
+
+  const nextStep = step + 1;
+  btn.dataset.confirm = String(nextStep);
+  btn.innerHTML = STEP_LABELS[nextStep];
+  if (nextStep === 1) { btn.style.background = 'rgba(224,176,84,0.3)'; btn.style.color = 'var(--retro-bg)'; }
+  else if (nextStep === 2) { btn.style.background = 'rgba(224,157,94,0.5)'; btn.style.color = 'var(--retro-bg)'; }
+  else { btn.style.background = 'var(--retro-red)'; btn.style.color = '#fff'; }
+
+  btn._resetTimer = setTimeout(abortToNormal, 4000);
 };
 
 // =========================================================================
@@ -1018,12 +1132,12 @@ function renderWarehouseTab() {
   const scoped = (state.warehouseShowAllDates ? allList : todayList)
     .slice().sort((a, b) => parseBizeeDate(b.dateStrRaw) - parseBizeeDate(a.dateStrRaw));
 
-  let newCount = 0, closedCount = 0, processedCount = 0, groupCount = 0;
+  let newCount = 0, closedCount = 0, groupCount = 0;
   scoped.forEach(item => {
     const poKey = normalizePO(item.poNo);
     const disp = getPODisposition(poKey);
     if (disp === 'closed') closedCount++;
-    else if (disp === 'processed') processedCount++;
+    else if (disp === 'processed') {}
     else if (isPOInAnyGroup(poKey)) groupCount++;
     else newCount++;
   });
@@ -1056,7 +1170,7 @@ function renderWarehouseTab() {
         else statusBadge = `<span class="xl-badge" style="background:rgba(140,184,122,0.15); color:var(--retro-green); border-color:var(--retro-green);">NEW</span>`;
         const oidSet = state.poOrderIds[poKey];
         const multiBadge = (oidSet && oidSet.size > 1)
-          ? `<span class="xl-badge" style="background:rgba(224,176,84,0.15); color:var(--retro-amber); border-color:var(--retro-amber);" title="Same PO number is linked to ${oidSet.size} different Order IDs">&#9888; ${oidSet.size} ORDER IDs</span>`
+          ? `<span class="xl-badge" style="background:rgba(224,176,84,0.15); color:var(--retro-amber); border-color:var(--retro-amber);" title="Same PO number is linked to ${oidSet.size} different Order IDs: ${Array.from(oidSet).join(', ')}">&#9888; ${oidSet.size} ORDER IDs</span>`
           : '';
         html += `
         <div class="wh-item">
@@ -1087,7 +1201,7 @@ $('rWhCreateGroup').onclick = () => {
   const scoped = getWarehouseScoped();
   const newPOs = scoped.filter(item => {
     const poKey = normalizePO(item.poNo);
-    return !isPOInAnyGroup(poKey) && !isPODone(poKey); // excludes CLOSED + PROCESSED + IN GROUP
+    return !isPOInAnyGroup(poKey) && !isPODone(poKey);
   }).map(item => item.poNo);
   if (newPOs.length === 0) {
     showNotice('NO NEW/UNPROCESSED POs TO ADD.', 'amber');
@@ -1159,14 +1273,14 @@ function renderGroupDetails(group) {
         const nKeyItem = normalizePO(item.po);
         const disp = getPODisposition(nKeyItem);
         const isDone = disp !== 'open';
-        if (state.hideDonePOs && isDone) return; // NEW clutter-reduction toggle
+        if (state.hideDonePOs && isDone) return;
         renderedCount++;
         let badgeHtml = '';
         if (disp === 'processed') badgeHtml = `<span class="xl-badge st-done">[PROCESSED]</span>`;
         else if (disp === 'closed') badgeHtml = `<span class="xl-badge st-closed">[CLOSED]</span>`;
         const oidSet = state.poOrderIds[nKeyItem];
         const multiBadge = (oidSet && oidSet.size > 1)
-          ? `<span class="xl-badge" style="background:rgba(224,176,84,0.15); color:var(--retro-amber); border-color:var(--retro-amber);" title="Same PO number is linked to ${oidSet.size} different Order IDs">&#9888; ${oidSet.size} IDs</span>`
+          ? `<span class="xl-badge" style="background:rgba(224,176,84,0.15); color:var(--retro-amber); border-color:var(--retro-amber);" title="Same PO number is linked to ${oidSet.size} different Order IDs: ${Array.from(oidSet).join(', ')}">&#9888; ${oidSet.size} IDs</span>`
           : '';
         let stockIssueHtml = '';
         if (state.showStockIssues) {
@@ -1436,8 +1550,8 @@ function processSalesOrderData(data) {
   state.warehousePOs = [];
   state.poNoToOrderId = {};
   state.soItemsByOrderId = {};
-  state.poStatusByPO = {};   // NEW
-  state.poOrderIds = {};     // NEW
+  state.poStatusByPO = {};
+  state.poOrderIds = {};
   const seenOrderIdForWarehouse = new Set();
 
   data.forEach(row => {
@@ -1445,7 +1559,7 @@ function processSalesOrderData(data) {
     const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No', 'Order']) || '').trim();
     const party = getColValue(row, ['Party Name', 'Customer Name', 'Party', 'Sales Buyer', 'Customer', 'Buyer Name', 'Client Name']);
     const dateStrRaw = getColValue(row, ['Order Date', 'Date', 'Requested At']);
-    const soStatus = String(getColValue(row, ['SO Status', 'SOStatus', 'Status', 'Order Status']) || '').trim(); // NEW
+    const soStatus = String(getColValue(row, ['SO Status', 'SOStatus', 'Status', 'Order Status']) || '').trim();
 
     const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
     keys.forEach(poKey => {
@@ -1453,7 +1567,6 @@ function processSalesOrderData(data) {
       if (!state.excelMeta[cleanKey]) state.excelMeta[cleanKey] = {};
       if (party) state.excelMeta[cleanKey].party = party;
       if (dateStrRaw) state.excelMeta[cleanKey].dateStrRaw = dateStrRaw;
-      // NEW: capture SO Status — 'Closed' wins over anything else
       if (soStatus && soStatus.toLowerCase() !== 'n/a') {
         const prev = state.poStatusByPO[cleanKey];
         if (!prev || soStatus.toLowerCase() === 'closed') state.poStatusByPO[cleanKey] = soStatus;
@@ -1471,7 +1584,6 @@ function processSalesOrderData(data) {
       const orderIdKey = normalizePO(orderIdRaw);
       if (poNoRaw) {
         state.poNoToOrderId[normalizePO(poNoRaw)] = orderIdKey;
-        // NEW: track every Order ID that shares the same PO number
         const pnKey = normalizePO(poNoRaw);
         if (!state.poOrderIds[pnKey]) state.poOrderIds[pnKey] = new Set();
         state.poOrderIds[pnKey].add(orderIdKey);
@@ -1646,7 +1758,7 @@ function renderCustRules() {
 renderCustRules();
 
 // =========================================================================
-// BOX CALCULATOR (unchanged)
+// BOX CALCULATOR (CSV) — unchanged
 // =========================================================================
 function parseCSV(text) {
   const rows = [];
@@ -1796,7 +1908,9 @@ function generateReport(codeIdx, sizeIdx, isCustomerWise, btnEl) {
   a.href = url;
   a.download = (isCustomerWise ? 'Customer_Box_Report_' : 'Total_Box_Report_') + group.name.replace(/[^a-z0-9]/gi, '_') + '.csv';
   a.style.display = 'none';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   const old = btnEl.innerHTML;
   btnEl.innerHTML = '\u2714 DOWNLOADED!';
   setTimeout(() => { btnEl.innerHTML = old; }, 2500);
@@ -1819,7 +1933,7 @@ const wasRestored = loadState();
 renderGroups();
 renderWarehouseTab();
 renderCustRules();
-enableAntiSleep(); // start keep-awake immediately, not just on scans
+enableAntiSleep();
 
 if (wasRestored) {
   showNotice('SESSION RESTORED FROM LAST RUN', 'green');
