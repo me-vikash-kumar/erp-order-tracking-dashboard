@@ -1,19 +1,20 @@
 void (async () => {
-const BASE = window.location.origin;
-if (document.getElementById('po-tool-root')) return;
+  const BASE = window.location.origin;
+  if (document.getElementById('po-tool-root')) return;
 
-if (!window.XLSX) {
-  const script = document.createElement('script');
-  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-  document.head.appendChild(script);
-}
+  if (!window.XLSX) {
+    const script = document.createElement('script');
+    // Use jsDelivr instead of cdnjs.cloudflare.com to avoid Edge Tracking Prevention warnings
+    script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    document.head.appendChild(script);
+  }
 
-const ui = document.createElement('div');
-ui.id = 'po-tool-root';
-document.body.appendChild(ui);
+  const ui = document.createElement('div');
+  ui.id = 'po-tool-root';
+  document.body.appendChild(ui);
 
-const style = document.createElement('style');
-style.innerHTML = `
+  const style = document.createElement('style');
+  style.innerHTML = `
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
 :root {
   --retro-bg: #1a1815; --retro-panel: #262321; --retro-border: #7e6b5c;
@@ -190,10 +191,17 @@ style.innerHTML = `
   animation: notice-in 0.2s ease-out;
 }
 @keyframes notice-in { from { top: -20px; opacity: 0; } to { top: 20px; opacity: 1; } }
+.r-speed-ctrl { display:flex; align-items:center; gap:8px; margin-bottom:12px; padding:8px 10px; background:var(--retro-dim); border:var(--px) solid var(--retro-border); flex-wrap:wrap; }
+.r-speed-ctrl .lbl { font-family:'Press Start 2P', monospace; font-size:7px; color:var(--retro-muted); white-space:nowrap; }
+.r-speed-ctrl .val { font-family:'Press Start 2P', monospace; font-size:9px; color:var(--retro-accent); min-width:16px; text-align:center; }
+.r-range { -webkit-appearance:none; appearance:none; flex:1; min-width:60px; height:6px; background:var(--retro-bg); border:var(--px) solid var(--retro-border); outline:none; cursor:pointer; }
+.r-range::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:14px; height:14px; background:var(--retro-accent); border:none; cursor:pointer; }
+.r-range::-moz-range-thumb { width:14px; height:14px; background:var(--retro-accent); border:none; cursor:pointer; border-radius:0; }
+.r-scan-live { font-family:'Press Start 2P', monospace; font-size:7px; color:var(--retro-amber); padding:6px 8px; background:rgba(224,176,84,0.08); border:var(--px) solid rgba(224,176,84,0.3); margin-bottom:8px; text-align:center; line-height:1.8; }
 `;
-document.head.appendChild(style);
+  document.head.appendChild(style);
 
-ui.innerHTML = `
+  ui.innerHTML = `
 <div class="r-header" title="DRAG TO MOVE">
   <div class="r-title-row">
     <span style="font-size:12px">&#9658;</span>
@@ -215,6 +223,13 @@ ui.innerHTML = `
     <div class="r-btn-row" style="margin-bottom: 12px;">
       <button class="r-btn primary" id="btnShowCreateGroup">+ CREATE NEW SCAN GROUP</button>
     </div>
+    <div class="r-speed-ctrl">
+      <span class="lbl">SCAN SPEED:</span>
+      <input type="range" class="r-range" id="rConcurrency" min="1" max="6" value="4">
+      <span class="val" id="rConcurrencyVal">4</span>
+      <span class="lbl">WORKERS</span>
+    </div>
+    <div class="r-scan-live" id="rScanLive" style="display:none"></div>
     <span class="r-scanline-label">ACTIVE & COMPLETED SCANS</span>
     <div id="rGroupListContainer">
       <p class="r-hint" style="text-align:center; padding: 20px 0;">NO GROUPS CREATED YET.</p>
@@ -327,7 +342,8 @@ ui.innerHTML = `
     <button class="r-btn secondary" id="rCancelCreate">CANCEL</button>
   </div>
   <div id="ftAuto" style="display:none; flex-direction:column; gap:6px;">
-    <button class="r-btn primary" id="rStartAuto">&#9654; SCAN DASHBOARD & RUN IN BACKGROUND</button>
+    <button class="r-btn primary" id="rStartAuto">&#9654; SCAN DASHBOARD &amp; RUN IN BACKGROUND</button>
+    <button class="r-btn danger" id="rAbortDashboard" style="display:none">&#10005; ABORT DASHBOARD SCRAPE</button>
   </div>
   <div id="ftResults" style="display:none; flex-direction:column; gap:6px;">
     <button class="r-btn success" id="rOpenAll">&#9658;&#9658; OPEN ALL FOUND ORDERS</button>
@@ -352,490 +368,520 @@ ui.innerHTML = `
 </div>
 `;
 
-const $ = id => document.getElementById(id);
-const STORAGE_KEY = 'poScannerState_v2_6';
-const POS_KEY = 'poScannerPanelPos_v1';
+  const $ = id => document.getElementById(id);
+  const STORAGE_KEY = 'poScannerState_v2_6';
+  const POS_KEY = 'poScannerPanelPos_v1';
 
-const state = {
-  groups: [],
-  activeGroupId: null,
-  isScanning: false,
-  parsedCSV: null,
-  dashboardAbort: false,
-  currentDispatchPOs: new Set(),
-  excelMeta: {},
-  showStockIssues: true,
-  hideDonePOs: false,
-  warehouseShowAllDates: false,
-  warehousePOs: [],
-  poNoToOrderId: {},
-  soItemsByOrderId: {},
-  dispatchItemsByOrderId: {},
-  poStatusByPO: {},
-  poOrderIds: {}
-};
-
-const normalizePO = (po) => String(po).trim().toUpperCase();
-const normCust = (name) => String(name || '').trim().toUpperCase();
-
-const PINNED_CUSTOMERS = [
-  'Blink Commerce Private Limited',
-  'CMUNITY INNOVATIONS PRIVATE LIMITED(CITY MALL)',
-  'FIRSTCLUB TECHNOLOGY PRIVATE LIMITED',
-  'Flipkart India Private Limited - Hyperlocal',
-  'Flipkart India Private Limited - Supermart',
-  'Innovative Retail Concepts Private Limited',
-  'RK WORLDINFOCOM PRIVATE LIMITED',
-  'Scootsy Logistics Private Ltd',
-  'Zepto Limited'
-];
-const WAREHOUSE_FILTER = 'yb fg warehouse';
-
-// =========================================================================
-// DRAGGABLE PANEL — grab the header bar to move; position is remembered
-// =========================================================================
-function clampPanel(left, top) {
-  const w = ui.offsetWidth || 620;
-  const maxLeft = Math.max(0, window.innerWidth - w);
-  const maxTop = Math.max(0, window.innerHeight - 40); // header always reachable
-  return {
-    left: Math.min(Math.max(0, left), maxLeft),
-    top: Math.min(Math.max(0, top), maxTop)
+  const state = {
+    groups: [],
+    activeGroupId: null,
+    isScanning: false,
+    parsedCSV: null,
+    dashboardAbort: false,
+    currentDispatchPOs: new Set(),
+    excelMeta: {},
+    showStockIssues: true,
+    hideDonePOs: false,
+    warehouseShowAllDates: false,
+    warehousePOs: [],
+    poNoToOrderId: {},
+    soItemsByOrderId: {},
+    dispatchItemsByOrderId: {},
+    poStatusByPO: {},
+    poOrderIds: {},
+    scanConcurrency: 4,
+    allGroupPOKeys: new Set(),
+    pendingQueue: []
   };
-}
 
-function applyPanelPos(left, top) {
-  const p = clampPanel(left, top);
-  ui.style.left = p.left + 'px';
-  ui.style.top = p.top + 'px';
-  ui.style.right = 'auto';
-  ui.style.bottom = 'auto';
-}
+  const normalizePO = (po) => String(po).trim().toUpperCase();
+  const normCust = (name) => String(name || '').trim().toUpperCase();
 
-(function initDrag() {
-  const header = ui.querySelector('.r-header');
-  if (!header) return;
+  const escHtml = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-  // Restore last saved position (clamped to current screen size)
-  try {
-    const raw = localStorage.getItem(POS_KEY);
-    if (raw) {
-      const pos = JSON.parse(raw);
-      if (typeof pos.left === 'number' && typeof pos.top === 'number') applyPanelPos(pos.left, pos.top);
+  function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+    const controller = new AbortController();
+    const origSignal = options.signal;
+    let timedOut = false;
+    if (origSignal) {
+      if (origSignal.aborted) controller.abort();
+      else origSignal.addEventListener('abort', () => controller.abort(), { once: true });
     }
-  } catch (e) {}
-
-  let dragging = false, startX = 0, startY = 0, origLeft = 0, origTop = 0;
-
-  header.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('.r-close')) return; // never drag from the EXIT button
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    dragging = true;
-    const rect = ui.getBoundingClientRect();
-    origLeft = rect.left;
-    origTop = rect.top;
-    startX = e.clientX;
-    startY = e.clientY;
-    ui.classList.add('dragging');
-    try { header.setPointerCapture(e.pointerId); } catch (err) {}
-  });
-
-  header.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    applyPanelPos(origLeft + (e.clientX - startX), origTop + (e.clientY - startY));
-  });
-
-  const endDrag = (e) => {
-    if (!dragging) return;
-    dragging = false;
-    ui.classList.remove('dragging');
-    try { header.releasePointerCapture(e.pointerId); } catch (err) {}
-    try {
-      const rect = ui.getBoundingClientRect();
-      localStorage.setItem(POS_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
-    } catch (err) {}
-  };
-  header.addEventListener('pointerup', endDrag);
-  header.addEventListener('pointercancel', endDrag);
-
-  // Keep the panel on-screen if the browser window is resized
-  window.addEventListener('resize', () => {
-    if (ui.style.left) {
-      const rect = ui.getBoundingClientRect();
-      applyPanelPos(rect.left, rect.top);
-    }
-  });
-})();
-
-// =========================================================================
-// ANTI-SLEEP ENGINE (Wake Lock + silent audio + Web Worker heartbeat)
-// =========================================================================
-let wakeLock = null;
-let antiSleepAudio = null;
-let antiSleepWorker = null;
-let antiSleepInterval = null;
-
-function startWorkerKeepAlive() {
-  if (antiSleepWorker) return;
-  try {
-    const blob = new Blob(['let n=0;setInterval(function(){n++;postMessage(n);},15000);'], { type: 'application/javascript' });
-    antiSleepWorker = new Worker(URL.createObjectURL(blob));
-    antiSleepWorker.onmessage = () => {};
-  } catch (e) { antiSleepWorker = null; }
-}
-
-async function enableAntiSleep() {
-  try {
-    if ('wakeLock' in navigator && (!wakeLock || wakeLock.released)) {
-      wakeLock = await navigator.wakeLock.request('screen');
-    }
-  } catch (err) { console.warn("Wake lock failed:", err); }
-  if (!antiSleepAudio) {
-    antiSleepAudio = document.createElement('audio');
-    antiSleepAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-    antiSleepAudio.loop = true;
-    antiSleepAudio.volume = 0;
-    antiSleepAudio.play().catch(() => console.log("Audio play blocked; needs user interaction"));
-  } else {
-    antiSleepAudio.play().catch(() => {});
-  }
-  startWorkerKeepAlive();
-  if (!antiSleepInterval) {
-    antiSleepInterval = setInterval(async () => {
-      try {
-        if ('wakeLock' in navigator && (!wakeLock || wakeLock.released)) {
-          wakeLock = await navigator.wakeLock.request('screen');
-        }
-      } catch (e) {}
-      const dot = $('rAliveDot');
-      if (dot) dot.textContent = 'AWAKE ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
-    }, 20000);
-  }
-}
-document.addEventListener('visibilitychange', () => { if (!document.hidden) enableAntiSleep(); });
-ui.addEventListener('click', () => { if (antiSleepAudio && antiSleepAudio.paused) antiSleepAudio.play().catch(() => {}); });
-
-function stopAntiSleep() {
-  if (antiSleepInterval) { clearInterval(antiSleepInterval); antiSleepInterval = null; }
-  if (antiSleepWorker) { try { antiSleepWorker.terminate(); } catch (e) {} antiSleepWorker = null; }
-  if (antiSleepAudio) { try { antiSleepAudio.pause(); } catch (e) {} }
-}
-
-// =========================================================================
-// PERSISTENCE (localStorage) — data survives refresh / accidental close
-// =========================================================================
-let saveTimer = null;
-function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveState, 800); }
-
-function serializeState() {
-  const soItems = {};
-  Object.keys(state.soItemsByOrderId).forEach(k => {
-    soItems[k] = { party: state.soItemsByOrderId[k].party, codes: Array.from(state.soItemsByOrderId[k].codes || []) };
-  });
-  const dispItems = {};
-  Object.keys(state.dispatchItemsByOrderId).forEach(k => { dispItems[k] = Array.from(state.dispatchItemsByOrderId[k]); });
-  const poOids = {};
-  Object.keys(state.poOrderIds).forEach(k => { poOids[k] = Array.from(state.poOrderIds[k]); });
-  const custIgn = {};
-  Object.keys(StockIssueAnalyzer.customerIgnore).forEach(k => { custIgn[k] = Array.from(StockIssueAnalyzer.customerIgnore[k]); });
-  return {
-    v: 2.6,
-    groups: state.groups,
-    excelMeta: state.excelMeta,
-    currentDispatchPOs: Array.from(state.currentDispatchPOs),
-    warehousePOs: state.warehousePOs,
-    poNoToOrderId: state.poNoToOrderId,
-    soItemsByOrderId: soItems,
-    dispatchItemsByOrderId: dispItems,
-    poStatusByPO: state.poStatusByPO,
-    poOrderIds: poOids,
-    analyzer: {
-      salesOrderItems: StockIssueAnalyzer.salesOrderItems,
-      fgStockData: StockIssueAnalyzer.fgStockData,
-      globalIgnore: Array.from(StockIssueAnalyzer.globalIgnore),
-      customerIgnore: custIgn,
-      custDisplayNames: custDisplayNames
-    },
-    savedAt: Date.now()
-  };
-}
-
-function saveState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState())); }
-  catch (e) { console.warn('PO Scanner: save failed', e); }
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    const s = JSON.parse(raw);
-    if (s.groups) state.groups = s.groups;
-    if (s.excelMeta) state.excelMeta = s.excelMeta;
-    if (s.currentDispatchPOs) state.currentDispatchPOs = new Set(s.currentDispatchPOs);
-    if (s.warehousePOs) state.warehousePOs = s.warehousePOs;
-    if (s.poNoToOrderId) state.poNoToOrderId = s.poNoToOrderId;
-    if (s.poStatusByPO) state.poStatusByPO = s.poStatusByPO;
-    if (s.poOrderIds) {
-      state.poOrderIds = {};
-      Object.keys(s.poOrderIds).forEach(k => { state.poOrderIds[k] = new Set(s.poOrderIds[k]); });
-    }
-    if (s.soItemsByOrderId) {
-      state.soItemsByOrderId = {};
-      Object.keys(s.soItemsByOrderId).forEach(k => {
-        state.soItemsByOrderId[k] = { party: s.soItemsByOrderId[k].party, codes: new Set(s.soItemsByOrderId[k].codes || []) };
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+      .then(res => { clearTimeout(timer); return res; })
+      .catch(err => {
+        clearTimeout(timer);
+        if (timedOut) throw new Error('FETCH_TIMEOUT: ' + url + ' timed out after ' + (timeoutMs / 1000) + 's');
+        throw err;
       });
-    }
-    if (s.dispatchItemsByOrderId) {
-      state.dispatchItemsByOrderId = {};
-      Object.keys(s.dispatchItemsByOrderId).forEach(k => { state.dispatchItemsByOrderId[k] = new Set(s.dispatchItemsByOrderId[k]); });
-    }
-    if (s.analyzer) {
-      StockIssueAnalyzer.salesOrderItems = s.analyzer.salesOrderItems || {};
-      StockIssueAnalyzer.fgStockData = s.analyzer.fgStockData || {};
-      StockIssueAnalyzer.globalIgnore = new Set(s.analyzer.globalIgnore || []);
-      StockIssueAnalyzer.customerIgnore = {};
-      Object.keys(s.analyzer.customerIgnore || {}).forEach(k => { StockIssueAnalyzer.customerIgnore[k] = new Set(s.analyzer.customerIgnore[k]); });
-      Object.assign(custDisplayNames, s.analyzer.custDisplayNames || {});
-      $('rGlobalIgnore').value = Array.from(StockIssueAnalyzer.globalIgnore).join(', ');
-    }
-    // Repair group scan states after a reload
-    state.groups.forEach(g => {
-      g.targets.forEach(t => { if (t.status === 'scanning') t.status = 'pending'; });
-      g.completed = g.targets.filter(t => t.status === 'found' || t.status === 'notfound').length;
-    });
-    return true;
-  } catch (e) { console.warn('PO Scanner: load failed', e); return false; }
-}
-
-function resetAllData() {
-  state.groups = [];
-  state.activeGroupId = null;
-  state.isScanning = false;
-  state.currentDispatchPOs = new Set();
-  state.excelMeta = {};
-  state.warehousePOs = [];
-  state.poNoToOrderId = {};
-  state.soItemsByOrderId = {};
-  state.dispatchItemsByOrderId = {};
-  state.poStatusByPO = {};
-  state.poOrderIds = {};
-  StockIssueAnalyzer.salesOrderItems = {};
-  StockIssueAnalyzer.fgStockData = {};
-  StockIssueAnalyzer.globalIgnore = new Set();
-  StockIssueAnalyzer.customerIgnore = {};
-  Object.keys(custDisplayNames).forEach(k => delete custDisplayNames[k]);
-}
-
-function showNotice(msg, type = 'amber') {
-  const div = document.createElement('div');
-  div.className = 'r-notice-overlay';
-  div.style.borderColor = `var(--retro-${type})`;
-  div.style.color = `var(--retro-${type})`;
-  div.textContent = msg;
-  $('po-tool-root').appendChild(div);
-  setTimeout(() => { if (div.parentNode) div.remove(); }, 3500);
-}
-
-const getColValue = (row, validKeys) => {
-  for (let v of validKeys) {
-    const target = String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
-    for (let k in row) {
-      const currentKey = String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (currentKey === target) return row[k];
-    }
   }
-  return null;
-};
 
-// =========================================================================
-// Stock Issue Analysis Engine (unchanged core)
-// =========================================================================
-const StockIssueAnalyzer = {
-  salesOrderItems: {},
-  fgStockData: {},
-  globalIgnore: new Set(),
-  customerIgnore: {},
-  getLastSixDigits: function(str) {
-    if (!str) return 'UNKNOWN';
-    const s = String(str).trim();
-    return s.length > 6 ? s.slice(-6) : s;
-  },
-  processSalesOrderRow: function(poNumber, rowData) {
-    const sku = getColValue(rowData, ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Item', 'Product']);
-    const qtyRaw = getColValue(rowData, ['Order Qty', 'Quantity', 'Qty', 'Total Qty']);
-    const qty = parseFloat(qtyRaw) || 0;
-    if (sku && qty > 0) {
-      if (!this.salesOrderItems[poNumber]) this.salesOrderItems[poNumber] = [];
-      this.salesOrderItems[poNumber].push({ rawSku: String(sku).trim(), sku6: this.getLastSixDigits(sku), reqQty: qty });
-    }
-  },
-  processFinishedGoodsData: function(data) {
-    data.forEach(row => {
-      const sku = getColValue(row, ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Product']);
-      const stockRaw = getColValue(row, ['In Stock Qty', 'Available Qty', 'Stock Qty', 'Stock', 'Closing Stock', 'Quantity']);
-      const prodRaw = getColValue(row, ['Max Producible Qty', 'Producible Qty', 'Max Producible Quantity']);
-      const stock = parseFloat(stockRaw) || 0;
-      const producible = parseFloat(prodRaw) || 0;
-      if (sku) this.fgStockData[String(sku).trim().toUpperCase()] = { stock, producible };
+  const SCAN_METRICS = { startTime: 0, completed: 0, total: 0 };
+
+  let renderDebounceTimer = null;
+  function debouncedRender() {
+    if (renderDebounceTimer) return;
+    renderDebounceTimer = setTimeout(() => {
+      renderDebounceTimer = null;
+      renderGroups();
+      if (state.activeGroupId) {
+        const g = state.groups.find(x => x.id === state.activeGroupId);
+        if (g) renderGroupDetails(g);
+      }
+    }, 600); // Throttles heavy DOM updates to ~1.5 per sec to guarantee zero freezing
+  }
+
+  function rebuildGroupPOIndex() {
+    state.allGroupPOKeys.clear();
+    state.groups.forEach(g => g.targets.forEach(t => state.allGroupPOKeys.add(normalizePO(t.po))));
+  }
+
+  const PINNED_CUSTOMERS = [
+    'Blink Commerce Private Limited',
+    'CMUNITY INNOVATIONS PRIVATE LIMITED(CITY MALL)',
+    'FIRSTCLUB TECHNOLOGY PRIVATE LIMITED',
+    'Flipkart India Private Limited - Hyperlocal',
+    'Flipkart India Private Limited - Supermart',
+    'Innovative Retail Concepts Private Limited',
+    'RK WORLDINFOCOM PRIVATE LIMITED',
+    'Scootsy Logistics Private Ltd',
+    'Zepto Limited'
+  ];
+  const WAREHOUSE_FILTER = 'yb fg warehouse';
+
+  function clampPanel(left, top) {
+    const w = ui.offsetWidth || 620;
+    const maxLeft = Math.max(0, window.innerWidth - w);
+    const maxTop = Math.max(0, window.innerHeight - 40);
+    return {
+      left: Math.min(Math.max(0, left), maxLeft),
+      top: Math.min(Math.max(0, top), maxTop)
+    };
+  }
+
+  function applyPanelPos(left, top) {
+    const p = clampPanel(left, top);
+    ui.style.left = p.left + 'px';
+    ui.style.top = p.top + 'px';
+    ui.style.right = 'auto';
+    ui.style.bottom = 'auto';
+  }
+
+  (function initDrag() {
+    const header = ui.querySelector('.r-header');
+    if (!header) return;
+
+    try {
+      const raw = localStorage.getItem(POS_KEY);
+      if (raw) {
+        const pos = JSON.parse(raw);
+        if (typeof pos.left === 'number' && typeof pos.top === 'number') applyPanelPos(pos.left, pos.top);
+      }
+    } catch (e) { }
+
+    let dragging = false, startX = 0, startY = 0, origLeft = 0, origTop = 0;
+
+    header.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.r-close')) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      dragging = true;
+      const rect = ui.getBoundingClientRect();
+      origLeft = rect.left;
+      origTop = rect.top;
+      startX = e.clientX;
+      startY = e.clientY;
+      ui.classList.add('dragging');
+      try { header.setPointerCapture(e.pointerId); } catch (err) { }
     });
-  },
-  isIgnored: function(rawSku, sku6, customerName) {
-    const upperRaw = rawSku.toUpperCase();
-    const upperSix = sku6.toUpperCase();
-    if (this.globalIgnore.has(upperRaw) || this.globalIgnore.has(upperSix)) return true;
-    if (customerName) {
-      const set = this.customerIgnore[normCust(customerName)];
-      if (set && (set.has(upperRaw) || set.has(upperSix))) return true;
-    }
-    return false;
-  },
-  getIssuesForPO: function(poNumber, customerName, isProcessed) {
-    const issues = [];
-    if (isProcessed) return issues;
-    const items = this.salesOrderItems[poNumber];
-    if (!items) return issues;
-    if (Object.keys(this.fgStockData).length === 0) return issues;
-    items.forEach(item => {
-      const searchSku = item.rawSku.toUpperCase();
-      if (this.isIgnored(item.rawSku, item.sku6, customerName)) return;
-      const stockData = this.fgStockData[searchSku] || { stock: 0, producible: 0 };
-      if (stockData.stock < item.reqQty) {
-        const shortage = item.reqQty - stockData.stock;
-        const isCombo = searchSku.includes('/COM/');
-        const canProduce = stockData.producible >= shortage && stockData.producible > 0;
-        issues.push({
-          rawSku: item.rawSku, sku6: item.sku6, req: item.reqQty, stock: stockData.stock,
-          shortage, producible: stockData.producible, isCombo, canProduce
-        });
+
+    header.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      applyPanelPos(origLeft + (e.clientX - startX), origTop + (e.clientY - startY));
+    });
+
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      ui.classList.remove('dragging');
+      try { header.releasePointerCapture(e.pointerId); } catch (err) { }
+      try {
+        const rect = ui.getBoundingClientRect();
+        localStorage.setItem(POS_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
+      } catch (err) { }
+    };
+    header.addEventListener('pointerup', endDrag);
+    header.addEventListener('pointercancel', endDrag);
+
+    window.addEventListener('resize', () => {
+      if (ui.style.left) {
+        const rect = ui.getBoundingClientRect();
+        applyPanelPos(rect.left, rect.top);
       }
     });
-    return issues;
+  })();
+
+  let wakeLock = null;
+  let antiSleepAudio = null;
+  let antiSleepKeepAlive = null;
+  let antiSleepInterval = null;
+
+  function startWorkerKeepAlive() {
+    if (antiSleepKeepAlive) return;
+    // Use setInterval instead of blob Worker to avoid CSP violations on bizeebuy.com
+    // (their CSP blocks blob: URLs for worker-src)
+    antiSleepKeepAlive = setInterval(() => {
+      // Lightweight no-op ping to prevent browser from throttling this tab
+      void 0;
+    }, 15000);
   }
-};
 
-// =========================================================================
-// PO DISPOSITION: 'closed' (SO Status) > 'processed' (dispatch sheet) > 'open'
-// =========================================================================
-const getPODisposition = (poKey) => {
-  const st = state.poStatusByPO[poKey];
-  if (st && String(st).toLowerCase() === 'closed') return 'closed';
-  if (state.currentDispatchPOs.has(poKey)) return 'processed';
-  return 'open';
-};
-const isPODone = (poKey) => getPODisposition(poKey) !== 'open';
+  async function enableAntiSleep() {
+    try {
+      if ('wakeLock' in navigator && (!wakeLock || wakeLock.released)) {
+        wakeLock = await navigator.wakeLock.request('screen');
+      }
+    } catch (err) { console.warn("Wake lock failed:", err); }
+    if (!antiSleepAudio) {
+      antiSleepAudio = document.createElement('audio');
+      antiSleepAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+      antiSleepAudio.loop = true;
+      antiSleepAudio.volume = 0;
+      antiSleepAudio.play().catch(() => console.log("Audio play blocked; needs user interaction"));
+    } else {
+      antiSleepAudio.play().catch(() => { });
+    }
+    startWorkerKeepAlive();
+    if (!antiSleepInterval) {
+      antiSleepInterval = setInterval(async () => {
+        try {
+          if ('wakeLock' in navigator && (!wakeLock || wakeLock.released)) {
+            wakeLock = await navigator.wakeLock.request('screen');
+          }
+        } catch (e) { }
+        const dot = $('rAliveDot');
+        if (dot) dot.textContent = 'AWAKE ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
+      }, 20000);
+    }
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) enableAntiSleep(); });
+  ui.addEventListener('click', () => { if (antiSleepAudio && antiSleepAudio.paused) antiSleepAudio.play().catch(() => { }); });
 
-// =========================================================================
-// DATE HELPERS (handles M/D/YY, D/M/YYYY etc.) + TODAY detection
-// =========================================================================
-function parseBizeeDate(dStr) {
-  if (!dStr) return Number.MAX_SAFE_INTEGER;
-  const s = String(dStr).trim();
-  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-  if (m) {
-    const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
-    let y = parseInt(m[3], 10); if (y < 100) y += 2000;
-    let day, mon;
-    if (a > 12) { day = a; mon = b; }
-    else if (b > 12) { mon = a; day = b; }
-    else { day = a; mon = b; }
-    const t = new Date(y, mon - 1, day).getTime();
+  function stopAntiSleep() {
+    if (antiSleepInterval) { clearInterval(antiSleepInterval); antiSleepInterval = null; }
+    if (antiSleepKeepAlive) { clearInterval(antiSleepKeepAlive); antiSleepKeepAlive = null; }
+    if (antiSleepAudio) { try { antiSleepAudio.pause(); } catch (e) { } }
+  }
+
+  let saveTimer = null;
+  function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveState, 3000); }
+
+  function serializeState() {
+    const soItems = {};
+    Object.keys(state.soItemsByOrderId).forEach(k => {
+      soItems[k] = { party: state.soItemsByOrderId[k].party, codes: Array.from(state.soItemsByOrderId[k].codes || []) };
+    });
+    const dispItems = {};
+    Object.keys(state.dispatchItemsByOrderId).forEach(k => { dispItems[k] = Array.from(state.dispatchItemsByOrderId[k]); });
+    const poOids = {};
+    Object.keys(state.poOrderIds).forEach(k => { poOids[k] = Array.from(state.poOrderIds[k]); });
+    const custIgn = {};
+    Object.keys(StockIssueAnalyzer.customerIgnore).forEach(k => { custIgn[k] = Array.from(StockIssueAnalyzer.customerIgnore[k]); });
+    return {
+      v: 2.6,
+      groups: state.groups,
+      excelMeta: state.excelMeta,
+      currentDispatchPOs: Array.from(state.currentDispatchPOs),
+      warehousePOs: state.warehousePOs,
+      poNoToOrderId: state.poNoToOrderId,
+      soItemsByOrderId: soItems,
+      dispatchItemsByOrderId: dispItems,
+      poStatusByPO: state.poStatusByPO,
+      poOrderIds: poOids,
+      analyzer: {
+        salesOrderItems: StockIssueAnalyzer.salesOrderItems,
+        fgStockData: StockIssueAnalyzer.fgStockData,
+        globalIgnore: Array.from(StockIssueAnalyzer.globalIgnore),
+        customerIgnore: custIgn,
+        custDisplayNames: custDisplayNames
+      },
+      savedAt: Date.now()
+    };
+  }
+
+  function saveState() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState())); }
+    catch (e) { console.warn('PO Scanner: save failed', e); }
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      const s = JSON.parse(raw);
+      if (s.groups) state.groups = s.groups;
+      if (s.excelMeta) state.excelMeta = s.excelMeta;
+      if (s.currentDispatchPOs) state.currentDispatchPOs = new Set(s.currentDispatchPOs);
+      if (s.warehousePOs) state.warehousePOs = s.warehousePOs;
+      if (s.poNoToOrderId) state.poNoToOrderId = s.poNoToOrderId;
+      if (s.poStatusByPO) state.poStatusByPO = s.poStatusByPO;
+      if (s.poOrderIds) {
+        state.poOrderIds = {};
+        Object.keys(s.poOrderIds).forEach(k => { state.poOrderIds[k] = new Set(s.poOrderIds[k]); });
+      }
+      if (s.soItemsByOrderId) {
+        state.soItemsByOrderId = {};
+        Object.keys(s.soItemsByOrderId).forEach(k => {
+          state.soItemsByOrderId[k] = { party: s.soItemsByOrderId[k].party, codes: new Set(s.soItemsByOrderId[k].codes || []) };
+        });
+      }
+      if (s.dispatchItemsByOrderId) {
+        state.dispatchItemsByOrderId = {};
+        Object.keys(s.dispatchItemsByOrderId).forEach(k => { state.dispatchItemsByOrderId[k] = new Set(s.dispatchItemsByOrderId[k]); });
+      }
+      if (s.analyzer) {
+        StockIssueAnalyzer.salesOrderItems = s.analyzer.salesOrderItems || {};
+        StockIssueAnalyzer.fgStockData = s.analyzer.fgStockData || {};
+        StockIssueAnalyzer.globalIgnore = new Set(s.analyzer.globalIgnore || []);
+        StockIssueAnalyzer.customerIgnore = {};
+        Object.keys(s.analyzer.customerIgnore || {}).forEach(k => { StockIssueAnalyzer.customerIgnore[k] = new Set(s.analyzer.customerIgnore[k]); });
+        Object.assign(custDisplayNames, s.analyzer.custDisplayNames || {});
+        $('rGlobalIgnore').value = Array.from(StockIssueAnalyzer.globalIgnore).join(', ');
+      }
+      state.pendingQueue = [];
+      state.groups.forEach(g => {
+        g.targets.forEach(t => {
+          if (t.status === 'scanning') t.status = 'pending';
+          if (typeof t.faded !== 'boolean') t.faded = false;
+          if (t.status === 'pending') state.pendingQueue.push({ target: t, group: g });
+        });
+        g.completed = g.targets.filter(t => t.status === 'found' || t.status === 'notfound').length;
+      });
+      return true;
+    } catch (e) { console.warn('PO Scanner: load failed', e); return false; }
+  }
+
+  function resetAllData() {
+    state.groups = [];
+    state.activeGroupId = null;
+    state.isScanning = false;
+    state.currentDispatchPOs = new Set();
+    state.excelMeta = {};
+    state.warehousePOs = [];
+    state.poNoToOrderId = {};
+    state.soItemsByOrderId = {};
+    state.dispatchItemsByOrderId = {};
+    state.poStatusByPO = {};
+    state.poOrderIds = {};
+    state.pendingQueue = [];
+    StockIssueAnalyzer.salesOrderItems = {};
+    StockIssueAnalyzer.fgStockData = {};
+    StockIssueAnalyzer.globalIgnore = new Set();
+    StockIssueAnalyzer.customerIgnore = {};
+    Object.keys(custDisplayNames).forEach(k => delete custDisplayNames[k]);
+  }
+
+  function showNotice(msg, type = 'amber') {
+    const div = document.createElement('div');
+    div.className = 'r-notice-overlay';
+    div.style.borderColor = `var(--retro-${type})`;
+    div.style.color = `var(--retro-${type})`;
+    div.textContent = msg;
+    $('po-tool-root').appendChild(div);
+    setTimeout(() => { if (div.parentNode) div.remove(); }, 3500);
+  }
+
+  const getColValue = (row, validKeys) => {
+    for (let v of validKeys) {
+      const target = String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
+      for (let k in row) {
+        const currentKey = String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (currentKey === target) return row[k];
+      }
+    }
+    return null;
+  };
+
+  const StockIssueAnalyzer = {
+    salesOrderItems: {},
+    fgStockData: {},
+    globalIgnore: new Set(),
+    customerIgnore: {},
+    getLastSixDigits: function (str) {
+      if (!str) return 'UNKNOWN';
+      const s = String(str).trim();
+      return s.length > 6 ? s.slice(-6) : s;
+    },
+    processSalesOrderRow: function (poNumber, rowData) {
+      const sku = getColValue(rowData, ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Item', 'Product']);
+      const qtyRaw = getColValue(rowData, ['Order Qty', 'Quantity', 'Qty', 'Total Qty']);
+      const qty = parseFloat(qtyRaw) || 0;
+      if (sku && qty > 0) {
+        if (!this.salesOrderItems[poNumber]) this.salesOrderItems[poNumber] = [];
+        this.salesOrderItems[poNumber].push({ rawSku: String(sku).trim(), sku6: this.getLastSixDigits(sku), reqQty: qty });
+      }
+    },
+    processFinishedGoodsData: function (data) {
+      data.forEach(row => {
+        const sku = getColValue(row, ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Product']);
+        const stockRaw = getColValue(row, ['In Stock Qty', 'Available Qty', 'Stock Qty', 'Stock', 'Closing Stock', 'Quantity']);
+        const prodRaw = getColValue(row, ['Max Producible Qty', 'Producible Qty', 'Max Producible Quantity']);
+        const stock = parseFloat(stockRaw) || 0;
+        const producible = parseFloat(prodRaw) || 0;
+        if (sku) this.fgStockData[String(sku).trim().toUpperCase()] = { stock, producible };
+      });
+    },
+    isIgnored: function (rawSku, sku6, customerName) {
+      const upperRaw = rawSku.toUpperCase();
+      const upperSix = sku6.toUpperCase();
+      if (this.globalIgnore.has(upperRaw) || this.globalIgnore.has(upperSix)) return true;
+      if (customerName) {
+        const set = this.customerIgnore[normCust(customerName)];
+        if (set && (set.has(upperRaw) || set.has(upperSix))) return true;
+      }
+      return false;
+    },
+    getIssuesForPO: function (poNumber, customerName, isProcessed) {
+      const issues = [];
+      if (isProcessed) return issues;
+      const items = this.salesOrderItems[poNumber];
+      if (!items) return issues;
+      if (Object.keys(this.fgStockData).length === 0) return issues;
+      items.forEach(item => {
+        const searchSku = item.rawSku.toUpperCase();
+        if (this.isIgnored(item.rawSku, item.sku6, customerName)) return;
+        const stockData = this.fgStockData[searchSku] || { stock: 0, producible: 0 };
+        if (stockData.stock < item.reqQty) {
+          const shortage = item.reqQty - stockData.stock;
+          const isCombo = searchSku.includes('/COM/');
+          const canProduce = stockData.producible >= shortage && stockData.producible > 0;
+          issues.push({
+            rawSku: item.rawSku, sku6: item.sku6, req: item.reqQty, stock: stockData.stock,
+            shortage, producible: stockData.producible, isCombo, canProduce
+          });
+        }
+      });
+      return issues;
+    }
+  };
+
+  const getPODisposition = (poKey) => {
+    const st = state.poStatusByPO[poKey];
+    if (st && String(st).toLowerCase() === 'closed') return 'closed';
+    if (state.currentDispatchPOs.has(poKey)) return 'processed';
+    return 'open';
+  };
+  const isPODone = (poKey) => getPODisposition(poKey) !== 'open';
+
+  function parseBizeeDate(dStr) {
+    if (!dStr) return Number.MAX_SAFE_INTEGER;
+    const s = String(dStr).trim();
+    const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+    if (m) {
+      const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+      let y = parseInt(m[3], 10); if (y < 100) y += 2000;
+      let day, mon;
+      if (a > 12) { day = a; mon = b; }
+      else if (b > 12) { mon = a; day = b; }
+      else { day = a; mon = b; }
+      const t = new Date(y, mon - 1, day).getTime();
+      return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+    }
+    const t = new Date(s).getTime();
     return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
   }
-  const t = new Date(s).getTime();
-  return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
-}
 
-function isTodayDate(dStr) {
-  const t = parseBizeeDate(dStr);
-  if (t === Number.MAX_SAFE_INTEGER) return false;
-  const d = new Date(t), now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-}
-
-// =========================================================================
-// NAVIGATION
-// =========================================================================
-const tabMap = {
-  'groups': { sec: 'secGroups', ft: 'ftGroups', title: 'SCAN GROUPS' },
-  'warehouse': { sec: 'secWarehouse', ft: 'ftWarehouse', title: 'YB FG WAREHOUSE POs' },
-  'auto': { sec: 'secAuto', ft: 'ftAuto', title: 'AUTO DASHBOARD' },
-  'excel': { sec: 'secExcel', ft: 'ftExcel', title: 'EXCEL STATUS VIEWER' },
-  'create': { sec: 'secCreateGroup', ft: 'ftCreateGroup', title: 'NEW GROUP' },
-  'results': { sec: 'secResults', ft: 'ftResults', title: 'GROUP RESULTS' },
-  'export': { sec: 'secExport', ft: 'ftExport', title: 'BOX CALCULATOR' },
-  'rules': { sec: 'secRules', ft: 'ftRules', title: 'IGNORE RULES' }
-};
-
-function goView(viewName, activeTab = null) {
-  document.querySelectorAll('.r-section, .r-footer > div').forEach(el => el.style.display = 'none');
-  $(tabMap[viewName].sec).style.display = 'block';
-  $(tabMap[viewName].ft).style.display = 'flex';
-  $('rTitleText').textContent = tabMap[viewName].title;
-  if (activeTab) {
-    document.querySelectorAll('.r-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
+  function isTodayDate(dStr) {
+    const t = parseBizeeDate(dStr);
+    if (t === Number.MAX_SAFE_INTEGER) return false;
+    const d = new Date(t), now = new Date();
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   }
-}
 
-document.querySelectorAll('.r-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    state.activeGroupId = null;
-    goView(tab.dataset.tab, tab.dataset.tab);
-  });
-});
+  const tabMap = {
+    'groups': { sec: 'secGroups', ft: 'ftGroups', title: 'SCAN GROUPS' },
+    'warehouse': { sec: 'secWarehouse', ft: 'ftWarehouse', title: 'YB FG WAREHOUSE POs' },
+    'auto': { sec: 'secAuto', ft: 'ftAuto', title: 'AUTO DASHBOARD' },
+    'excel': { sec: 'secExcel', ft: 'ftExcel', title: 'EXCEL STATUS VIEWER' },
+    'create': { sec: 'secCreateGroup', ft: 'ftCreateGroup', title: 'NEW GROUP' },
+    'results': { sec: 'secResults', ft: 'ftResults', title: 'GROUP RESULTS' },
+    'export': { sec: 'secExport', ft: 'ftExport', title: 'BOX CALCULATOR' },
+    'rules': { sec: 'secRules', ft: 'ftRules', title: 'IGNORE RULES' }
+  };
 
-let unloadGuardEnabled = true;
-let exitTimeout;
-$('rClose').onclick = (e) => {
-  if (e.target.dataset.confirm === '1') {
-    unloadGuardEnabled = false;
-    stopAntiSleep();
-    ui.remove();
-  } else {
-    e.target.dataset.confirm = '1';
-    e.target.innerHTML = 'SURE?';
-    e.target.style.background = 'var(--retro-amber)';
-    clearTimeout(exitTimeout);
-    exitTimeout = setTimeout(() => {
-      e.target.dataset.confirm = '0';
-      e.target.innerHTML = '&#10005; EXIT';
-      e.target.style.background = '';
-    }, 3000);
-  }
-};
-
-$('btnShowCreateGroup').onclick = () => {
-  $('rLabel').value = '';
-  $('rPOs').value = '';
-  goView('create', 'groups');
-};
-$('rCancelCreate').onclick = () => goView('groups', 'groups');
-$('rBackToGroups').onclick = () => { state.activeGroupId = null; goView('groups', 'groups'); };
-
-// =========================================================================
-// GROUPS LIST
-// =========================================================================
-function renderGroups() {
-  const container = $('rGroupListContainer');
-  if (state.groups.length === 0) {
-    container.innerHTML = '<p class="r-hint" style="text-align:center; padding: 20px 0;">NO GROUPS CREATED YET.</p>';
-    return;
-  }
-  container.innerHTML = state.groups.map(g => {
-    const pct = g.total === 0 ? 0 : Math.round((g.completed / g.total) * 100);
-    const isScanDone = g.completed >= g.total;
-    const remaining = g.targets.filter(t => !isPODone(normalizePO(t.po))).length;
-    let statusClass = 'scanning';
-    let statusText = 'SCANNING...';
-    let statusStyle = '';
-    if (isScanDone) {
-      if (remaining === 0) { statusClass = 'done'; statusText = 'DONE'; }
-      else { statusClass = ''; statusText = `${remaining} REMAINING`; statusStyle = 'color: var(--retro-amber);'; }
+  function goView(viewName, activeTab = null) {
+    document.querySelectorAll('.r-section, .r-footer > div').forEach(el => el.style.display = 'none');
+    $(tabMap[viewName].sec).style.display = 'block';
+    $(tabMap[viewName].ft).style.display = 'flex';
+    $('rTitleText').textContent = tabMap[viewName].title;
+    if (activeTab) {
+      document.querySelectorAll('.r-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
     }
-    return `
+  }
+
+  document.querySelectorAll('.r-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      state.activeGroupId = null;
+      goView(tab.dataset.tab, tab.dataset.tab);
+      if (tab.dataset.tab === 'warehouse') renderWarehouseTab();
+    });
+  });
+
+  $('rConcurrency').addEventListener('input', (e) => {
+    const val = parseInt(e.target.value);
+    state.scanConcurrency = val;
+    $('rConcurrencyVal').textContent = val;
+  });
+
+  let unloadGuardEnabled = true;
+  let exitTimeout;
+  $('rClose').onclick = (e) => {
+    if (e.target.dataset.confirm === '1') {
+      unloadGuardEnabled = false;
+      stopAntiSleep();
+      ui.remove();
+    } else {
+      e.target.dataset.confirm = '1';
+      e.target.innerHTML = 'SURE?';
+      e.target.style.background = 'var(--retro-amber)';
+      clearTimeout(exitTimeout);
+      exitTimeout = setTimeout(() => {
+        e.target.dataset.confirm = '0';
+        e.target.innerHTML = '&#10005; EXIT';
+        e.target.style.background = '';
+      }, 3000);
+    }
+  };
+
+  $('btnShowCreateGroup').onclick = () => {
+    $('rLabel').value = '';
+    $('rPOs').value = '';
+    goView('create', 'groups');
+  };
+  $('rCancelCreate').onclick = () => goView('groups', 'groups');
+  $('rBackToGroups').onclick = () => { state.activeGroupId = null; goView('groups', 'groups'); };
+
+  function renderGroups() {
+    const container = $('rGroupListContainer');
+    if (state.groups.length === 0) {
+      container.innerHTML = '<p class="r-hint" style="text-align:center; padding: 20px 0;">NO GROUPS CREATED YET.</p>';
+      return;
+    }
+    container.innerHTML = state.groups.map(g => {
+      const pct = g.total === 0 ? 0 : Math.round((g.completed / g.total) * 100);
+      const isScanDone = g.completed >= g.total;
+      const remaining = g.targets.filter(t => !isPODone(normalizePO(t.po))).length;
+      let statusClass = 'scanning';
+      let statusText = 'SCANNING...';
+      let statusStyle = '';
+      if (isScanDone) {
+        if (remaining === 0) { statusClass = 'done'; statusText = 'DONE'; }
+        else { statusClass = ''; statusText = `${remaining} REMAINING`; statusStyle = 'color: var(--retro-amber);'; }
+      }
+      return `
     <div class="r-group-card" data-id="${g.id}">
       <div class="r-group-header">
-        <span>${g.name}</span>
+        <span>${escHtml(g.name)}</span>
         <div style="display:flex; align-items:center; gap:8px;">
           <span class="r-group-status ${statusClass}" style="${statusStyle}">${statusText}</span>
           <button class="r-btn danger del-group-btn" style="padding: 2px 6px; font-size: 7px; width:auto;">DEL</button>
@@ -846,337 +892,422 @@ function renderGroups() {
         ${g.completed} / ${g.total} POs PROCESSED
       </div>
     </div>`;
-  }).reverse().join('');
-  renderWarehouseTab();
-}
+    }).reverse().join('');
 
-$('rGroupListContainer').addEventListener('click', e => {
-  const card = e.target.closest('.r-group-card');
-  if (!card) return;
-  const groupId = parseInt(card.dataset.id);
-  if (e.target.closest('.del-group-btn')) {
-    e.preventDefault(); e.stopPropagation();
-    const btn = e.target.closest('.del-group-btn');
-    if (btn.dataset.confirm === '1') {
-      state.groups = state.groups.filter(g => g.id !== groupId);
-      renderGroups();
-      scheduleSave();
-      showNotice('GROUP DELETED', 'red');
-    } else {
-      btn.dataset.confirm = '1';
-      const oldText = btn.textContent;
-      btn.textContent = 'SURE?';
-      btn.style.background = 'var(--retro-amber)';
-      btn.style.color = 'var(--retro-bg)';
-      setTimeout(() => {
-        if (btn.parentNode) {
-          btn.dataset.confirm = '0';
-          btn.textContent = oldText;
-          btn.style.background = '';
-          btn.style.color = '';
-        }
-      }, 3000);
+    const liveEl = $('rScanLive');
+    if (liveEl) {
+      if (state.isScanning && SCAN_METRICS.total > 0) {
+        const elapsed = (Date.now() - SCAN_METRICS.startTime) / 1000;
+        const speed = elapsed > 0 ? (SCAN_METRICS.completed / elapsed).toFixed(1) : '0.0';
+        const remaining = SCAN_METRICS.total - SCAN_METRICS.completed;
+        const eta = elapsed > 0 && SCAN_METRICS.completed > 0 ? Math.ceil(remaining / (SCAN_METRICS.completed / elapsed)) : '—';
+        liveEl.style.display = 'block';
+        liveEl.textContent = '\u25B6 ' + (state.scanConcurrency || 4) + ' WORKERS \u00B7 ' + SCAN_METRICS.completed + '/' + SCAN_METRICS.total + ' POs \u00B7 ~' + speed + ' PO/sec \u00B7 ETA: ' + eta + 's';
+      } else {
+        liveEl.style.display = 'none';
+      }
     }
-    return;
+    // REMOVED: renderWarehouseTab(); from here to prevent main thread blocking during scans
   }
-  openGroupResults(groupId);
-});
 
-// =========================================================================
-// CLEAR SAVED DATA — SAFE 4-STEP CONFIRMATION
-// =========================================================================
-$('btnClearSaved').onclick = (e) => {
-  const btn = e.currentTarget;
-  const RESET_LABEL = '&#8635; CLEAR SAVED DATA (FULL RESET)';
-  const STEP_LABELS = [
-    '',
-    '&#9888; STEP 1 OF 4 — SURE? CLICK AGAIN',
-    '&#9888; STEP 2 OF 4 — ALL GROUPS + SCANS WILL BE WIPED',
-    '&#9888; STEP 3 OF 4 — EXCEL DATA & RULES TOO. FINAL CLICK NEXT'
-  ];
-  const step = parseInt(btn.dataset.confirm || '0', 10);
-  clearTimeout(btn._resetTimer);
+  $('rGroupListContainer').addEventListener('click', e => {
+    const card = e.target.closest('.r-group-card');
+    if (!card) return;
+    const groupId = parseInt(card.dataset.id);
+    if (e.target.closest('.del-group-btn')) {
+      e.preventDefault(); e.stopPropagation();
+      const btn = e.target.closest('.del-group-btn');
+      if (btn.dataset.confirm === '1') {
+        state.groups = state.groups.filter(g => g.id !== groupId);
+        state.pendingQueue = state.pendingQueue.filter(item => item.group.id !== groupId);
+        rebuildGroupPOIndex();
+        renderGroups();
+        renderWarehouseTab();
+        scheduleSave();
+        showNotice('GROUP DELETED', 'red');
+      } else {
+        btn.dataset.confirm = '1';
+        const oldText = btn.textContent;
+        btn.textContent = 'SURE?';
+        btn.style.background = 'var(--retro-amber)';
+        btn.style.color = 'var(--retro-bg)';
+        setTimeout(() => {
+          if (btn.parentNode) {
+            btn.dataset.confirm = '0';
+            btn.textContent = oldText;
+            btn.style.background = '';
+            btn.style.color = '';
+          }
+        }, 3000);
+      }
+      return;
+    }
+    openGroupResults(groupId);
+  });
 
-  const abortToNormal = () => {
-    if (btn.parentNode) {
+  $('btnClearSaved').onclick = (e) => {
+    const btn = e.currentTarget;
+    const RESET_LABEL = '&#8635; CLEAR SAVED DATA (FULL RESET)';
+    const STEP_LABELS = [
+      '',
+      '&#9888; STEP 1 OF 4 — SURE? CLICK AGAIN',
+      '&#9888; STEP 2 OF 4 — ALL GROUPS + SCANS WILL BE WIPED',
+      '&#9888; STEP 3 OF 4 — EXCEL DATA & RULES TOO. FINAL CLICK NEXT'
+    ];
+    const step = parseInt(btn.dataset.confirm || '0', 10);
+    clearTimeout(btn._resetTimer);
+
+    const abortToNormal = () => {
+      if (btn.parentNode) {
+        btn.dataset.confirm = '0';
+        btn.innerHTML = RESET_LABEL;
+        btn.style.background = '';
+        btn.style.color = '';
+      }
+    };
+
+    if (step >= 3) {
       btn.dataset.confirm = '0';
       btn.innerHTML = RESET_LABEL;
       btn.style.background = '';
       btn.style.color = '';
+      try { localStorage.removeItem(STORAGE_KEY); } catch (err) { }
+      resetAllData();
+      saveState();
+      renderGroups();
+      renderWarehouseTab();
+      updateCustomerDropdown();
+      renderCustRules();
+      $('rGlobalIgnore').value = '';
+      $('rExcelDataArea').style.display = 'none';
+      $('rSalesOrderName').textContent = '[ CLICK TO LOAD BizeeBuy Sales Order Status Report... ]';
+      $('rDispatchName').textContent = '[ CLICK TO LOAD DISPATCH SHEET ]';
+      $('rFGName').textContent = '[ CLICK TO LOAD Finished Goods Excel (3).xls ]';
+      showNotice('FULL RESET COMPLETE (4/4 CONFIRMED)', 'red');
+      return;
     }
+
+    const nextStep = step + 1;
+    btn.dataset.confirm = String(nextStep);
+    btn.innerHTML = STEP_LABELS[nextStep];
+    if (nextStep === 1) { btn.style.background = 'rgba(224,176,84,0.3)'; btn.style.color = 'var(--retro-bg)'; }
+    else if (nextStep === 2) { btn.style.background = 'rgba(224,157,94,0.5)'; btn.style.color = 'var(--retro-bg)'; }
+    else { btn.style.background = 'var(--retro-red)'; btn.style.color = '#fff'; }
+
+    btn._resetTimer = setTimeout(abortToNormal, 4000);
   };
 
-  if (step >= 3) {
-    btn.dataset.confirm = '0';
-    btn.innerHTML = RESET_LABEL;
-    btn.style.background = '';
-    btn.style.color = '';
-    try { localStorage.removeItem(STORAGE_KEY); } catch (err) {}
-    resetAllData();
-    saveState();
+  $('rStartManual').onclick = () => {
+    enableAntiSleep();
+    const raw = $('rPOs').value;
+    const label = ($('rLabel').value.trim().toUpperCase()) || 'MANUAL BATCH ' + (state.groups.length + 1);
+    const orders = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    if (!orders.length) { showNotice('ENTER AT LEAST ONE PO NUMBER.', 'red'); return; }
+    startGroupScan(label, orders);
+    goView('groups', 'groups');
+  };
+
+  function startGroupScan(name, poArray) {
+    const uniquePOs = [...new Set(poArray)];
+    const group = {
+      id: Date.now(),
+      name: name,
+      targets: uniquePOs.map(po => ({ po, reviewUrl: null, status: 'pending', poTotal: 0, items: [], faded: false })),
+      completed: 0,
+      total: uniquePOs.length
+    };
+    state.groups.push(group);
+
+    group.targets.forEach(t => {
+      state.pendingQueue.push({ target: t, group: group });
+    });
+
+    rebuildGroupPOIndex();
     renderGroups();
     renderWarehouseTab();
-    updateCustomerDropdown();
-    renderCustRules();
-    $('rGlobalIgnore').value = '';
-    $('rExcelDataArea').style.display = 'none';
-    $('rSalesOrderName').textContent = '[ CLICK TO LOAD BizeeBuy Sales Order Status Report... ]';
-    $('rDispatchName').textContent = '[ CLICK TO LOAD DISPATCH SHEET ]';
-    $('rFGName').textContent = '[ CLICK TO LOAD Finished Goods Excel (3).xls ]';
-    showNotice('FULL RESET COMPLETE (4/4 CONFIRMED)', 'red');
-    return;
-  }
-
-  const nextStep = step + 1;
-  btn.dataset.confirm = String(nextStep);
-  btn.innerHTML = STEP_LABELS[nextStep];
-  if (nextStep === 1) { btn.style.background = 'rgba(224,176,84,0.3)'; btn.style.color = 'var(--retro-bg)'; }
-  else if (nextStep === 2) { btn.style.background = 'rgba(224,157,94,0.5)'; btn.style.color = 'var(--retro-bg)'; }
-  else { btn.style.background = 'var(--retro-red)'; btn.style.color = '#fff'; }
-
-  btn._resetTimer = setTimeout(abortToNormal, 4000);
-};
-
-// =========================================================================
-// CREATE & BACKGROUND SCAN
-// =========================================================================
-$('rStartManual').onclick = () => {
-  enableAntiSleep();
-  const raw = $('rPOs').value;
-  const label = ($('rLabel').value.trim().toUpperCase()) || 'MANUAL BATCH ' + (state.groups.length + 1);
-  const orders = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-  if (!orders.length) { showNotice('ENTER AT LEAST ONE PO NUMBER.', 'red'); return; }
-  startGroupScan(label, orders);
-  goView('groups', 'groups');
-};
-
-function startGroupScan(name, poArray) {
-  const uniquePOs = [...new Set(poArray)];
-  const group = {
-    id: Date.now(),
-    name: name,
-    targets: uniquePOs.map(po => ({ po, reviewUrl: null, status: 'pending', poTotal: 0, items: [] })),
-    completed: 0,
-    total: uniquePOs.length
-  };
-  state.groups.push(group);
-  renderGroups();
-  scheduleSave();
-  processQueue();
-}
-
-async function processQueue() {
-  if (state.isScanning) return;
-  state.isScanning = true;
-  while (true) {
-    let targetInfo = null;
-    for (let g of state.groups) {
-      let t = g.targets.find(x => x.status === 'pending');
-      if (t) { targetInfo = { target: t, group: g }; break; }
-    }
-    if (!targetInfo) { state.isScanning = false; break; }
-    const { target, group } = targetInfo;
-    target.status = 'scanning';
-    renderGroups();
-    await performSingleScan(target);
-    group.completed++;
-    renderGroups();
     scheduleSave();
-    if (state.activeGroupId === group.id) renderGroupDetails(group);
-    await new Promise(r => setTimeout(r, 200));
+    processQueue();
   }
-}
 
-async function performSingleScan(target) {
-  try {
-    let foundUrl = target.reviewUrl;
-    if (!foundUrl) {
-      const url = BASE + '/sales-order-dashboard?SalesOrderSearch[sales_order_id]=' + encodeURIComponent(target.po);
-      const res = await fetch(url, { credentials: 'include' });
-      if (res.url && res.url.includes('-review')) {
-        foundUrl = res.url;
-      } else {
+  async function processQueue() {
+    if (state.isScanning) return;
+    if (state.pendingQueue.length === 0) return;
+    state.isScanning = true;
+
+    SCAN_METRICS.startTime = Date.now();
+    SCAN_METRICS.completed = 0;
+    SCAN_METRICS.total = state.pendingQueue.length;
+
+    const concurrency = state.scanConcurrency || 4;
+    const workers = [];
+    for (let i = 0; i < concurrency; i++) {
+      workers.push(scanWorker(i));
+    }
+
+    try {
+      await Promise.allSettled(workers);
+    } finally {
+      state.isScanning = false;
+      SCAN_METRICS.total = 0;
+      renderGroups();
+      if (state.activeGroupId) {
+        const g = state.groups.find(x => x.id === state.activeGroupId);
+        if (g) renderGroupDetails(g);
+      }
+      scheduleSave();
+      // Drain: items may have been added while workers were finishing up
+      if (state.pendingQueue.length > 0) {
+        setTimeout(() => processQueue(), 150);
+      }
+    }
+  }
+
+  async function scanWorker(workerId) {
+    await new Promise(r => setTimeout(r, workerId * 100));
+
+    while (true) {
+      const targetInfo = state.pendingQueue.pop();
+      if (!targetInfo) break;
+
+      const { target, group } = targetInfo;
+      if (target.status !== 'pending') continue;
+
+      target.status = 'scanning';
+
+      try {
+        await performSingleScan(target, 3);
+      } catch (e) {
+        console.error('Worker', workerId, 'unhandled error for', target.po, e);
+      } finally {
+        // SAFETY NET: guarantee target never stays stuck at 'scanning'
+        if (target.status === 'scanning') {
+          target.status = 'notfound';
+          console.warn('Worker', workerId, '- forced', target.po, 'to notfound (was stuck at scanning)');
+        }
+      }
+
+      group.completed++;
+      SCAN_METRICS.completed++;
+      debouncedRender();
+      scheduleSave();
+
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
+  async function performSingleScan(target, maxRetries) {
+    const retries = maxRetries || 0;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        let foundUrl = target.reviewUrl;
+        if (!foundUrl) {
+          const url = BASE + '/sales-order-dashboard?SalesOrderSearch[sales_order_id]=' + encodeURIComponent(target.po);
+          const res = await fetchWithTimeout(url, { credentials: 'include' }, 30000);
+          if (!res.ok && attempt < retries) {
+            const delay = res.status === 429 ? 3000 * Math.pow(2, attempt) : 800 * Math.pow(2, attempt);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+          if (res.url && res.url.includes('-review')) {
+            foundUrl = res.url;
+          } else {
+            const html = await res.text();
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+
+            // OPTIMIZATION: Only scan grid rows instead of all document TDs to prevent UI lockup
+            const rows = doc.querySelectorAll('#biz-grid-list table tbody tr.biz-grid-list, #biz-grid-list table tbody tr');
+            for (const row of rows) {
+              if (row.textContent.includes(target.po)) {
+                const eyeBtn = row.querySelector('a[href*="-review"]');
+                if (eyeBtn) {
+                  const href = eyeBtn.getAttribute('href');
+                  foundUrl = href.startsWith('http') ? href : BASE + href;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        if (foundUrl) {
+          const reviewRes = await fetchWithTimeout(foundUrl, { credentials: 'include' }, 30000);
+          if (!reviewRes.ok && attempt < retries) {
+            const delay = reviewRes.status === 429 ? 3000 * Math.pow(2, attempt) : 800 * Math.pow(2, attempt);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+          const reviewHtml = await reviewRes.text();
+          const reviewDoc = new DOMParser().parseFromString(reviewHtml, 'text/html');
+          let poTotal = 0;
+          const trs = Array.from(reviewDoc.querySelectorAll('#bidsbdy tr'));
+          const totalRow = trs.find(tr => tr.querySelector('td:nth-last-child(2)')?.textContent.trim() === 'Total');
+          if (totalRow) {
+            const valTd = totalRow.querySelector('td:last-child');
+            poTotal = parseFloat(valTd.textContent.replace(/[^0-9.-]/g, '')) || 0;
+          }
+          const items = [];
+          reviewDoc.querySelectorAll('#bidsbdy tr.listing-1').forEach(row => {
+            const tds = row.querySelectorAll('td');
+            if (tds.length >= 5) {
+              const codeEl = row.querySelector('h5');
+              const code = codeEl ? codeEl.textContent.trim() : '';
+              const qty = parseFloat(tds[3].textContent.trim().replace(/[^0-9.-]/g, '')) || 0;
+              if (code && qty > 0) items.push({ code, qty });
+            }
+          });
+          target.reviewUrl = foundUrl;
+          target.poTotal = poTotal;
+          target.items = items;
+          target.status = 'found';
+        } else {
+          target.status = 'notfound';
+        }
+        return;
+      } catch (e) {
+        if (attempt < retries) {
+          console.warn(`Scan retry ${attempt + 1}/${retries} for ${target.po}:`, e.message);
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+          continue;
+        }
+        console.error("Scan Error for", target.po, e);
+        target.status = 'notfound';
+      }
+    }
+  }
+
+  $('rStartAuto').onclick = async function () {
+    enableAntiSleep();
+    const btn = this;
+    const abortBtn = $('rAbortDashboard');
+    btn.disabled = true;
+    btn.textContent = 'SCRAPING PAGES... PLEASE WAIT';
+    if (abortBtn) abortBtn.style.display = 'block';
+    state.dashboardAbort = false;
+    const abortCtrl = new AbortController();
+    if (abortBtn) abortBtn.onclick = () => { state.dashboardAbort = true; abortCtrl.abort(); };
+    let currentUrl = window.location.href;
+    const page1Link = document.querySelector('.pagination a[data-page="0"]');
+    if (page1Link) currentUrl = page1Link.href;
+    const allScraped = [];
+    let pageCount = 0;
+    try {
+      while (currentUrl && !state.dashboardAbort) {
+        pageCount++;
+        btn.textContent = 'SCRAPING PAGE ' + pageCount + '...';
+        const res = await fetchWithTimeout(currentUrl, {
+          credentials: 'include',
+          signal: abortCtrl.signal
+        }, 30000);
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
-        const cells = Array.from(doc.querySelectorAll('td'));
-        for (const cell of cells) {
-          const text = cell.textContent.trim();
-          if (text === target.po || text.includes(target.po)) {
-            const eyeBtn = cell.closest('tr')?.querySelector('a[href*="-review"]');
-            if (eyeBtn) {
-              const href = eyeBtn.getAttribute('href');
-              foundUrl = href.startsWith('http') ? href : BASE + href;
-              break;
-            }
-          }
-        }
-        if (!foundUrl) {
-          const rows = doc.querySelectorAll('#biz-grid-list table tbody tr.biz-grid-list');
-          if (rows.length === 1) {
-            const anyEyeBtn = rows[0].querySelector('a[href*="-review"]');
-            if (anyEyeBtn) {
-              const href = anyEyeBtn.getAttribute('href');
-              foundUrl = href.startsWith('http') ? href : BASE + href;
-            }
-          }
-        }
+        doc.querySelectorAll('#biz-grid-list table tbody tr.biz-grid-list').forEach(row => {
+          const poCell = row.querySelector('td[data-col-seq="1"]');
+          const viewBtn = row.querySelector('a.btn-primary[href*="-review"]');
+          if (poCell && viewBtn) allScraped.push(poCell.textContent.trim());
+        });
+        const nextLink = doc.querySelector('.pagination li.next:not(.disabled) a');
+        currentUrl = nextLink ? nextLink.href : null;
       }
+    } catch (e) {
+      if (!state.dashboardAbort) console.error('Dashboard scrape error:', e);
     }
-    if (foundUrl) {
-      const reviewRes = await fetch(foundUrl, { credentials: 'include' });
-      const reviewHtml = await reviewRes.text();
-      const reviewDoc = new DOMParser().parseFromString(reviewHtml, 'text/html');
-      let poTotal = 0;
-      const trs = Array.from(reviewDoc.querySelectorAll('#bidsbdy tr'));
-      const totalRow = trs.find(tr => tr.querySelector('td:nth-last-child(2)')?.textContent.trim() === 'Total');
-      if (totalRow) {
-        const valTd = totalRow.querySelector('td:last-child');
-        poTotal = parseFloat(valTd.textContent.replace(/[^0-9.-]/g, '')) || 0;
-      }
-      const items = [];
-      reviewDoc.querySelectorAll('#bidsbdy tr.listing-1').forEach(row => {
-        const tds = row.querySelectorAll('td');
-        if (tds.length >= 5) {
-          const codeEl = row.querySelector('h5');
-          const code = codeEl ? codeEl.textContent.trim() : '';
-          const qty = parseFloat(tds[3].textContent.trim().replace(/[^0-9.-]/g, '')) || 0;
-          if (code && qty > 0) items.push({ code, qty });
-        }
-      });
-      target.reviewUrl = foundUrl;
-      target.poTotal = poTotal;
-      target.items = items;
-      target.status = 'found';
-    } else {
-      target.status = 'notfound';
+    if (abortBtn) abortBtn.style.display = 'none';
+    btn.disabled = false;
+    btn.innerHTML = '&#9654; SCAN DASHBOARD &amp; RUN IN BACKGROUND';
+    if (state.dashboardAbort && allScraped.length > 0) {
+      showNotice('ABORTED AFTER PAGE ' + pageCount + '. USING ' + allScraped.length + ' POs COLLECTED.', 'amber');
     }
-  } catch (e) {
-    console.error("Scan Error for", target.po, e);
-    target.status = 'notfound';
-  }
-}
-
-$('rStartAuto').onclick = async function() {
-  enableAntiSleep();
-  const btn = this;
-  btn.disabled = true;
-  btn.textContent = 'SCRAPING PAGES... PLEASE WAIT';
-  state.dashboardAbort = false;
-  let currentUrl = window.location.href;
-  const page1Link = document.querySelector('.pagination a[data-page="0"]');
-  if (page1Link) currentUrl = page1Link.href;
-  const allScraped = [];
-  try {
-    while (currentUrl && !state.dashboardAbort) {
-      const res = await fetch(currentUrl, { credentials: 'include' });
-      const html = await res.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      doc.querySelectorAll('#biz-grid-list table tbody tr.biz-grid-list').forEach(row => {
-        const poCell = row.querySelector('td[data-col-seq="1"]');
-        const viewBtn = row.querySelector('a.btn-primary[href*="-review"]');
-        if (poCell && viewBtn) allScraped.push(poCell.textContent.trim());
-      });
-      const nextLink = doc.querySelector('.pagination li.next:not(.disabled) a');
-      currentUrl = nextLink ? nextLink.href : null;
+    if (allScraped.length > 0) {
+      startGroupScan('AUTO DASHBOARD SCAN', allScraped);
+      goView('groups', 'groups');
+    } else if (!state.dashboardAbort) {
+      showNotice('NO POs FOUND ON DASHBOARD.', 'amber');
     }
-  } catch (e) { console.error(e); }
-  btn.disabled = false;
-  btn.textContent = '▶ SCAN DASHBOARD & RUN IN BACKGROUND';
-  if (allScraped.length > 0) {
-    startGroupScan('AUTO DASHBOARD SCAN', allScraped);
-    goView('groups', 'groups');
-  } else {
-    showNotice('NO POs FOUND ON DASHBOARD.', 'amber');
+  };
+
+  function openGroupResults(groupId) {
+    state.activeGroupId = groupId;
+    const group = state.groups.find(g => g.id === groupId);
+    if (!group) return;
+    tabMap['results'].title = group.name;
+    goView('results', 'groups');
+    renderGroupDetails(group);
   }
-};
 
-function openGroupResults(groupId) {
-  state.activeGroupId = groupId;
-  const group = state.groups.find(g => g.id === groupId);
-  if (!group) return;
-  tabMap['results'].title = group.name;
-  goView('results', 'groups');
-  renderGroupDetails(group);
-}
-
-// =========================================================================
-// YB FG WAREHOUSE TAB — TODAY ONLY (default) + CUSTOMER CATEGORIZATION
-// =========================================================================
-function isPOInAnyGroup(poKey) {
-  return state.groups.some(g => g.targets.some(t => normalizePO(t.po) === poKey));
-}
-
-function getWarehouseScoped() {
-  const byPO = {};
-  (state.warehousePOs || []).forEach(item => {
-    const k = normalizePO(item.poNo);
-    if (!byPO[k]) byPO[k] = item;
-  });
-  let list = Object.values(byPO);
-  if (!state.warehouseShowAllDates) list = list.filter(i => isTodayDate(i.dateStrRaw));
-  list.sort((a, b) => parseBizeeDate(b.dateStrRaw) - parseBizeeDate(a.dateStrRaw));
-  return list;
-}
-
-function renderWarehouseTab() {
-  const area = $('rWarehouseArea');
-  if (!area) return;
-  if (!state.warehousePOs || state.warehousePOs.length === 0) {
-    area.innerHTML = '<p class="r-hint" style="text-align:center; padding: 20px 0;">UPLOAD SALES ORDER REPORT TO SEE POs.</p>';
-    return;
+  function isPOInAnyGroup(poKey) {
+    return state.allGroupPOKeys.has(poKey);
   }
-  const byPO = {};
-  state.warehousePOs.forEach(item => { const k = normalizePO(item.poNo); if (!byPO[k]) byPO[k] = item; });
-  const allList = Object.values(byPO);
-  const todayList = allList.filter(i => isTodayDate(i.dateStrRaw));
-  const scoped = (state.warehouseShowAllDates ? allList : todayList)
-    .slice().sort((a, b) => parseBizeeDate(b.dateStrRaw) - parseBizeeDate(a.dateStrRaw));
 
-  let newCount = 0, closedCount = 0, groupCount = 0;
-  scoped.forEach(item => {
-    const poKey = normalizePO(item.poNo);
-    const disp = getPODisposition(poKey);
-    if (disp === 'closed') closedCount++;
-    else if (disp === 'processed') {}
-    else if (isPOInAnyGroup(poKey)) groupCount++;
-    else newCount++;
-  });
+  function getWarehouseScoped() {
+    const byPO = {};
+    (state.warehousePOs || []).forEach(item => {
+      const k = normalizePO(item.poNo);
+      if (!byPO[k]) byPO[k] = item;
+    });
+    let list = Object.values(byPO);
+    if (!state.warehouseShowAllDates) list = list.filter(i => isTodayDate(i.dateStrRaw));
+    list.sort((a, b) => parseBizeeDate(b.dateStrRaw) - parseBizeeDate(a.dateStrRaw));
+    return list;
+  }
 
-  const byParty = {};
-  scoped.forEach(item => {
-    const p = item.party || 'UNKNOWN CUSTOMER';
-    if (!byParty[p]) byParty[p] = [];
-    byParty[p].push(item);
-  });
+  function renderWarehouseTab() {
+    const area = $('rWarehouseArea');
+    if (!area) return;
+    if (!state.warehousePOs || state.warehousePOs.length === 0) {
+      area.innerHTML = '<p class="r-hint" style="text-align:center; padding: 20px 0;">UPLOAD SALES ORDER REPORT TO SEE POs.</p>';
+      return;
+    }
+    const byPO = {};
+    state.warehousePOs.forEach(item => { const k = normalizePO(item.poNo); if (!byPO[k]) byPO[k] = item; });
+    const allList = Object.values(byPO);
+    const todayList = allList.filter(i => isTodayDate(i.dateStrRaw));
+    const scoped = (state.warehouseShowAllDates ? allList : todayList)
+      .slice().sort((a, b) => parseBizeeDate(b.dateStrRaw) - parseBizeeDate(a.dateStrRaw));
 
-  let html = `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+    let newCount = 0, closedCount = 0, groupCount = 0;
+    scoped.forEach(item => {
+      const poKey = normalizePO(item.poNo);
+      const disp = getPODisposition(poKey);
+      if (disp === 'closed') closedCount++;
+      else if (disp === 'processed') { }
+      else if (isPOInAnyGroup(poKey)) groupCount++;
+      else newCount++;
+    });
+
+    const byParty = {};
+    scoped.forEach(item => {
+      const p = item.party || 'UNKNOWN CUSTOMER';
+      if (!byParty[p]) byParty[p] = [];
+      byParty[p].push(item);
+    });
+
+    let html = `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
     <button class="r-btn secondary" id="rWhDateToggle" style="width:auto; padding:5px 8px; font-size:7px;">${state.warehouseShowAllDates ? '&#9660; SHOWING: ALL DATES' : '&#9660; SHOWING: TODAY ONLY'}</button>
     <div class="r-hint" style="margin:0;">${scoped.length} SHOWN &middot; <span style="color:var(--retro-green)">${newCount} NEW</span> &middot; <span style="color:var(--retro-blue)">${closedCount} CLOSED</span> &middot; <span style="color:var(--retro-muted)">${groupCount} IN GROUP</span></div>
   </div>`;
 
-  if (scoped.length === 0) {
-    html += `<p class="r-hint" style="text-align:center; padding:16px 0;">NO YB FG WAREHOUSE POs DATED TODAY (${new Date().toLocaleDateString('en-IN')}).<br>SWITCH TO "ALL DATES" ABOVE TO SEE HISTORY (${allList.length} TOTAL).</p>`;
-  } else {
-    Object.keys(byParty).sort().forEach(party => {
-      html += `<div class="xl-customer-name" style="margin-top:12px;">${party.toUpperCase()} <span style="color:var(--retro-muted);">(${byParty[party].length} POs)</span></div>`;
-      byParty[party].forEach(item => {
-        const poKey = normalizePO(item.poNo);
-        const disp = getPODisposition(poKey);
-        const inGroup = isPOInAnyGroup(poKey);
-        let statusBadge = '';
-        if (disp === 'closed') statusBadge = `<span class="xl-badge st-closed">CLOSED</span>`;
-        else if (disp === 'processed') statusBadge = `<span class="xl-badge st-done">PROCESSED</span>`;
-        else if (inGroup) statusBadge = `<span class="xl-badge" style="background:rgba(224,157,94,0.15); color:var(--retro-accent); border-color:var(--retro-accent);">IN GROUP</span>`;
-        else statusBadge = `<span class="xl-badge" style="background:rgba(140,184,122,0.15); color:var(--retro-green); border-color:var(--retro-green);">NEW</span>`;
-        const oidSet = state.poOrderIds[poKey];
-        const multiBadge = (oidSet && oidSet.size > 1)
-          ? `<span class="xl-badge" style="background:rgba(224,176,84,0.15); color:var(--retro-amber); border-color:var(--retro-amber);" title="Same PO number is linked to ${oidSet.size} different Order IDs: ${Array.from(oidSet).join(', ')}">&#9888; ${oidSet.size} ORDER IDs</span>`
-          : '';
-        html += `
+    if (scoped.length === 0) {
+      html += `<p class="r-hint" style="text-align:center; padding:16px 0;">NO YB FG WAREHOUSE POs DATED TODAY (${new Date().toLocaleDateString('en-IN')}).<br>SWITCH TO "ALL DATES" ABOVE TO SEE HISTORY (${allList.length} TOTAL).</p>`;
+    } else {
+      Object.keys(byParty).sort().forEach(party => {
+        html += `<div class="xl-customer-name" style="margin-top:12px;">${party.toUpperCase()} <span style="color:var(--retro-muted);">(${byParty[party].length} POs)</span></div>`;
+        byParty[party].forEach(item => {
+          const poKey = normalizePO(item.poNo);
+          const disp = getPODisposition(poKey);
+          const inGroup = isPOInAnyGroup(poKey);
+          let statusBadge = '';
+          if (disp === 'closed') statusBadge = `<span class="xl-badge st-closed">CLOSED</span>`;
+          else if (disp === 'processed') statusBadge = `<span class="xl-badge st-done">PROCESSED</span>`;
+          else if (inGroup) statusBadge = `<span class="xl-badge" style="background:rgba(224,157,94,0.15); color:var(--retro-accent); border-color:var(--retro-accent);">IN GROUP</span>`;
+          else statusBadge = `<span class="xl-badge" style="background:rgba(140,184,122,0.15); color:var(--retro-green); border-color:var(--retro-green);">NEW</span>`;
+          const oidSet = state.poOrderIds[poKey];
+          const multiBadge = (oidSet && oidSet.size > 1)
+            ? `<span class="xl-badge" style="background:rgba(224,176,84,0.15); color:var(--retro-amber); border-color:var(--retro-amber);" title="Same PO number is linked to ${oidSet.size} different Order IDs: ${Array.from(oidSet).join(', ')}">&#9888; ${oidSet.size} ORDER IDs</span>`
+            : '';
+          html += `
         <div class="wh-item">
           <div class="wh-left">
-            <span class="wh-po">&#9658; ${item.poNo}</span>
-            <span class="wh-party">${item.party}</span>
+            <span class="wh-po">&#9658; ${escHtml(item.poNo)}</span>
+            <span class="wh-party">${escHtml(item.party)}</span>
           </div>
           <div style="display:flex; align-items:center; gap:6px; flex-shrink:0; flex-wrap:wrap; justify-content:flex-end;">
             ${multiBadge}
@@ -1184,60 +1315,57 @@ function renderWarehouseTab() {
             ${statusBadge}
           </div>
         </div>`;
+        });
       });
-    });
+    }
+    area.innerHTML = html;
   }
-  area.innerHTML = html;
-}
 
-$('rWarehouseArea').addEventListener('click', e => {
-  if (e.target.closest('#rWhDateToggle')) {
-    state.warehouseShowAllDates = !state.warehouseShowAllDates;
-    renderWarehouseTab();
-  }
-});
+  $('rWarehouseArea').addEventListener('click', e => {
+    if (e.target.closest('#rWhDateToggle')) {
+      state.warehouseShowAllDates = !state.warehouseShowAllDates;
+      renderWarehouseTab();
+    }
+  });
 
-$('rWhCreateGroup').onclick = () => {
-  const scoped = getWarehouseScoped();
-  const newPOs = scoped.filter(item => {
-    const poKey = normalizePO(item.poNo);
-    return !isPOInAnyGroup(poKey) && !isPODone(poKey);
-  }).map(item => item.poNo);
-  if (newPOs.length === 0) {
-    showNotice('NO NEW/UNPROCESSED POs TO ADD.', 'amber');
-    return;
-  }
-  const stamp = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-  startGroupScan(`YB FG WH - ${stamp}`, newPOs);
-  goView('groups', 'groups');
-  showNotice(`ADDED ${newPOs.length} NEW POs TO A SCAN GROUP`, 'green');
-};
+  $('rWhCreateGroup').onclick = () => {
+    const scoped = getWarehouseScoped();
+    const newPOs = scoped.filter(item => {
+      const poKey = normalizePO(item.poNo);
+      return !isPOInAnyGroup(poKey) && !isPODone(poKey);
+    }).map(item => item.poNo);
+    if (newPOs.length === 0) {
+      showNotice('NO NEW/UNPROCESSED POs TO ADD.', 'amber');
+      return;
+    }
+    const stamp = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+    startGroupScan(`YB FG WH - ${stamp}`, newPOs);
+    goView('groups', 'groups');
+    showNotice(`ADDED ${newPOs.length} NEW POs TO A SCAN GROUP`, 'green');
+  };
 
-$('rWhCopyList').onclick = async () => {
-  const list = getWarehouseScoped().map(item => item.poNo).join('\n');
-  if (!list) { showNotice('NOTHING TO COPY.', 'amber'); return; }
-  try {
-    await navigator.clipboard.writeText(list);
-    showNotice('PO NUMBERS COPIED.', 'green');
-  } catch (e) {
-    showNotice('COPY FAILED (CLIPBOARD BLOCKED).', 'red');
-  }
-};
+  $('rWhCopyList').onclick = async () => {
+    const list = getWarehouseScoped().map(item => item.poNo).join('\n');
+    if (!list) { showNotice('NOTHING TO COPY.', 'amber'); return; }
+    try {
+      await navigator.clipboard.writeText(list);
+      showNotice('PO NUMBERS COPIED.', 'green');
+    } catch (e) {
+      showNotice('COPY FAILED (CLIPBOARD BLOCKED).', 'red');
+    }
+  };
 
-// =========================================================================
-// GROUP RESULTS DETAIL VIEW
-// =========================================================================
-function renderGroupDetails(group) {
-  const found = group.targets.filter(t => t.status === 'found');
-  const notFound = group.targets.filter(t => t.status === 'notfound');
-  const totalValue = found.reduce((sum, t) => sum + t.poTotal, 0);
-  const avg = found.length ? (totalValue / found.length) : 0;
-  const remainingCount = group.targets.filter(t => !isPODone(normalizePO(t.po))).length;
-  const scanIndicator = group.completed < group.total
-    ? `<div class="r-group-status scanning" style="margin-bottom:8px; font-family:'Press Start 2P', monospace; font-size:7px;">SCANNING (${group.completed}/${group.total})</div>`
-    : '';
+  function renderGroupDetails(group) {
+    const found = group.targets.filter(t => t.status === 'found');
+    const notFound = group.targets.filter(t => t.status === 'notfound');
+    const totalValue = found.reduce((sum, t) => sum + t.poTotal, 0);
+    const avg = found.length ? (totalValue / found.length) : 0;
+    const remainingCount = group.targets.filter(t => !isPODone(normalizePO(t.po))).length;
+    const scanIndicator = group.completed < group.total
+      ? `<div class="r-group-status scanning" style="margin-bottom:8px; font-family:'Press Start 2P', monospace; font-size:7px;">SCANNING (${group.completed}/${group.total})</div>`
+      : '';
 
-  $('rStatsArea').innerHTML = scanIndicator + `
+    $('rStatsArea').innerHTML = scanIndicator + `
   <div style="font-family:'Press Start 2P', monospace; font-size:8px; background:var(--retro-dim); border:var(--px) solid var(--retro-border); padding:10px 6px; text-align:center; color:var(--retro-accent);">
     <span style="display:block; margin-bottom:8px; color:var(--retro-muted)">TOTAL VAL</span>
     <span style="word-break: break-word; line-height: 1.4;">&#8377; ${totalValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
@@ -1250,55 +1378,57 @@ function renderGroupDetails(group) {
     <div class="r-stat"><span class="val" style="font-size:11px">&#8377; ${avg.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span><span class="lbl">AVG PO</span></div>
   </div>`;
 
-  const linksEl = $('rLinkList');
-  if (found.length) {
-    const groupedPOs = {};
-    found.forEach(t => {
-      const nKey = normalizePO(t.po);
-      const meta = state.excelMeta[nKey];
-      const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
-      if (!groupedPOs[party]) groupedPOs[party] = [];
-      groupedPOs[party].push(t);
-    });
-    let listHtml = '';
-    let renderedCount = 0;
-    Object.keys(groupedPOs).sort().forEach(party => {
-      const sortedItems = groupedPOs[party].slice().sort((a, b) => {
-        const metaA = state.excelMeta[normalizePO(a.po)] || {};
-        const metaB = state.excelMeta[normalizePO(b.po)] || {};
-        return parseBizeeDate(metaA.dateStrRaw) - parseBizeeDate(metaB.dateStrRaw);
+    const linksEl = $('rLinkList');
+    if (found.length) {
+      const groupedPOs = {};
+      found.forEach(t => {
+        const nKey = normalizePO(t.po);
+        const meta = state.excelMeta[nKey];
+        const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
+        if (!groupedPOs[party]) groupedPOs[party] = [];
+        groupedPOs[party].push(t);
       });
-      let partyHtml = '';
-      sortedItems.forEach((item, i) => {
-        const nKeyItem = normalizePO(item.po);
-        const disp = getPODisposition(nKeyItem);
-        const isDone = disp !== 'open';
-        if (state.hideDonePOs && isDone) return;
-        renderedCount++;
-        let badgeHtml = '';
-        if (disp === 'processed') badgeHtml = `<span class="xl-badge st-done">[PROCESSED]</span>`;
-        else if (disp === 'closed') badgeHtml = `<span class="xl-badge st-closed">[CLOSED]</span>`;
-        const oidSet = state.poOrderIds[nKeyItem];
-        const multiBadge = (oidSet && oidSet.size > 1)
-          ? `<span class="xl-badge" style="background:rgba(224,176,84,0.15); color:var(--retro-amber); border-color:var(--retro-amber);" title="Same PO number is linked to ${oidSet.size} different Order IDs: ${Array.from(oidSet).join(', ')}">&#9888; ${oidSet.size} IDs</span>`
-          : '';
-        let stockIssueHtml = '';
-        if (state.showStockIssues) {
-          const stockIssues = StockIssueAnalyzer.getIssuesForPO(nKeyItem, party, isDone);
-          if (stockIssues.length > 0) {
-            stockIssueHtml = stockIssues.map(iss => {
-              if (iss.canProduce) {
-                return `<div class="issue-line produce">&#9889; SKU:${iss.sku6} (REQ:${iss.req} &gt; STK:${iss.stock}) [CAN PRODUCE: ${iss.producible}]</div>`;
-              }
-              return `<div class="issue-line short">&#9888; SKU:${iss.sku6} (REQ:${iss.req} &gt; STK:${iss.stock})</div>`;
-            }).join('');
+      let listHtml = []; // Use array join for faster string concatenation
+      let renderedCount = 0;
+      Object.keys(groupedPOs).sort().forEach(party => {
+        const sortedItems = groupedPOs[party].slice().sort((a, b) => {
+          const metaA = state.excelMeta[normalizePO(a.po)] || {};
+          const metaB = state.excelMeta[normalizePO(b.po)] || {};
+          return parseBizeeDate(metaA.dateStrRaw) - parseBizeeDate(metaB.dateStrRaw);
+        });
+        let partyHtml = [];
+        sortedItems.forEach((item, i) => {
+          const nKeyItem = normalizePO(item.po);
+          const disp = getPODisposition(nKeyItem);
+          const isDone = disp !== 'open';
+          if (state.hideDonePOs && isDone) return;
+          renderedCount++;
+          let badgeHtml = '';
+          if (disp === 'processed') badgeHtml = `<span class="xl-badge st-done">[PROCESSED]</span>`;
+          else if (disp === 'closed') badgeHtml = `<span class="xl-badge st-closed">[CLOSED]</span>`;
+          const oidSet = state.poOrderIds[nKeyItem];
+          const multiBadge = (oidSet && oidSet.size > 1)
+            ? `<span class="xl-badge" style="background:rgba(224,176,84,0.15); color:var(--retro-amber); border-color:var(--retro-amber);" title="Same PO number is linked to ${oidSet.size} different Order IDs: ${Array.from(oidSet).join(', ')}">&#9888; ${oidSet.size} IDs</span>`
+            : '';
+          let stockIssueHtml = '';
+          if (state.showStockIssues) {
+            const stockIssues = StockIssueAnalyzer.getIssuesForPO(nKeyItem, party, isDone);
+            if (stockIssues.length > 0) {
+              stockIssueHtml = stockIssues.map(iss => {
+                if (iss.canProduce) {
+                  return `<div class="issue-line produce">&#9889; SKU:${iss.sku6} (REQ:${iss.req} &gt; STK:${iss.stock}) [CAN PRODUCE: ${iss.producible}]</div>`;
+                }
+                return `<div class="issue-line short">&#9888; SKU:${iss.sku6} (REQ:${iss.req} &gt; STK:${iss.stock})</div>`;
+              }).join('');
+            }
           }
-        }
-        partyHtml += `
-        <a href="${item.reviewUrl}" target="_blank" class="r-link r-res-link" data-idx="${i}">
+
+          const fadedClass = item.faded ? 'opened' : '';
+          partyHtml.push(`
+        <a href="${item.reviewUrl}" target="_blank" class="r-link r-res-link ${fadedClass}" data-idx="${i}" data-po="${item.po}">
           <div class="r-link-top">
             <div style="display:flex; flex-direction:column; justify-content:center;">
-              <span>&#9658; ${item.po}</span>
+              <span>&#9658; ${escHtml(item.po)}</span>
             </div>
             <div style="display:flex; align-items:center; gap: 6px; flex-shrink: 0;">
               ${multiBadge}
@@ -1307,28 +1437,36 @@ function renderGroupDetails(group) {
             </div>
           </div>
           ${stockIssueHtml}
-        </a>`;
+        </a>`);
+        });
+        if (partyHtml.length > 0) {
+          listHtml.push(`<div class="xl-customer-name" style="margin-top:12px; font-size: 10px;">${escHtml(party.toUpperCase())}</div>`);
+          listHtml.push(partyHtml.join(''));
+        }
       });
-      if (partyHtml) {
-        listHtml += `<div class="xl-customer-name" style="margin-top:12px; font-size: 10px;">${party.toUpperCase()}</div>` + partyHtml;
+      if (renderedCount > 0) {
+        linksEl.innerHTML = listHtml.join('');
+      } else if (state.hideDonePOs) {
+        linksEl.innerHTML = '<p style="text-align:center;color:var(--retro-muted);font-size:14px;padding:20px 0">ALL POs IN THIS GROUP ARE PROCESSED / CLOSED.<br>TURN OFF "HIDE PROCESSED / CLOSED" TO VIEW THEM.</p>';
+      } else {
+        linksEl.innerHTML = '<p style="text-align:center;color:var(--retro-red);font-family:\'Press Start 2P\',monospace;font-size:8px;padding:20px 0">NO ORDERS FOUND YET</p>';
       }
-    });
-    if (renderedCount > 0) {
-      linksEl.innerHTML = listHtml;
-    } else if (state.hideDonePOs) {
-      linksEl.innerHTML = '<p style="text-align:center;color:var(--retro-muted);font-size:14px;padding:20px 0">ALL POs IN THIS GROUP ARE PROCESSED / CLOSED.<br>TURN OFF "HIDE PROCESSED / CLOSED" TO VIEW THEM.</p>';
+      linksEl.querySelectorAll('.r-res-link').forEach(el => {
+        el.onclick = (e) => {
+          if (!e.target.closest('.rescan-btn')) {
+            el.classList.add('opened');
+            const po = el.dataset.po;
+            const t = group.targets.find(x => x.po === po);
+            if (t) t.faded = true;
+          }
+        };
+      });
     } else {
       linksEl.innerHTML = '<p style="text-align:center;color:var(--retro-red);font-family:\'Press Start 2P\',monospace;font-size:8px;padding:20px 0">NO ORDERS FOUND YET</p>';
     }
-    linksEl.querySelectorAll('.r-res-link').forEach(el => {
-      el.onclick = (e) => { if (!e.target.closest('.rescan-btn')) el.classList.add('opened'); };
-    });
-  } else {
-    linksEl.innerHTML = '<p style="text-align:center;color:var(--retro-red);font-family:\'Press Start 2P\',monospace;font-size:8px;padding:20px 0">NO ORDERS FOUND YET</p>';
-  }
 
-  $('rNotFoundArea').innerHTML = notFound.length
-    ? `<details style="margin-top:8px"><div class="r-not-found"><summary>${notFound.length} NOT FOUND (CLICK TO VIEW)</summary>
+    $('rNotFoundArea').innerHTML = notFound.length
+      ? `<details style="margin-top:8px"><div class="r-not-found"><summary>${notFound.length} NOT FOUND (CLICK TO VIEW)</summary>
       <div class="r-not-found-list">
       ${notFound.map(n => `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; border-bottom:1px dashed rgba(214,140,134,0.3); padding-bottom:4px;">
@@ -1336,608 +1474,617 @@ function renderGroupDetails(group) {
           <button class="r-btn secondary rescan-btn" data-po="${n.po}" style="padding:2px 4px; font-size:8px; width:auto; color:var(--retro-text);">RESCAN</button>
         </div>`).join('')}
       </div></div></details>`
-    : '';
-}
-
-$('rToggleStockIssues').addEventListener('change', (e) => {
-  state.showStockIssues = e.target.checked;
-  refreshActiveViews();
-});
-$('rToggleHideDone').addEventListener('change', (e) => {
-  state.hideDonePOs = e.target.checked;
-  refreshActiveViews();
-});
-
-$('rResetFades').onclick = () => {
-  document.querySelectorAll('.r-res-link.opened').forEach(el => el.classList.remove('opened'));
-  showNotice('FADES RESET.', 'green');
-};
-
-function triggerRescanPO(po) {
-  const g = state.groups.find(x => x.id === state.activeGroupId);
-  if (!g) return;
-  const t = g.targets.find(x => x.po === po);
-  if (t && (t.status === 'found' || t.status === 'notfound')) {
-    g.completed = Math.max(0, g.completed - 1);
-    t.status = 'pending';
-    t.reviewUrl = null;
-    renderGroupDetails(g);
-    showNotice(`QUEUED RESCAN FOR ${po}`, 'green');
-    processQueue();
+      : '';
   }
-}
 
-$('rLinkList').addEventListener('click', e => {
-  const btn = e.target.closest('.rescan-btn');
-  if (btn) { e.preventDefault(); e.stopPropagation(); triggerRescanPO(btn.dataset.po); }
-});
-$('rNotFoundArea').addEventListener('click', e => {
-  const btn = e.target.closest('.rescan-btn');
-  if (btn) { e.preventDefault(); e.stopPropagation(); triggerRescanPO(btn.dataset.po); }
-});
-
-$('rRescanGroup').onclick = () => {
-  const g = state.groups.find(x => x.id === state.activeGroupId);
-  if (g) {
-    g.completed = 0;
-    g.targets.forEach(t => { t.status = 'pending'; t.reviewUrl = null; });
-    renderGroupDetails(g);
-    showNotice(`RESCANNING BATCH: ${g.name}`, 'amber');
-    processQueue();
-  }
-};
-
-$('rOpenAll').onclick = async function() {
-  const group = state.groups.find(g => g.id === state.activeGroupId);
-  if (!group) return;
-  const btn = this;
-  btn.textContent = 'OPENING...';
-  btn.disabled = true;
-  const links = document.querySelectorAll('.r-res-link:not(.opened)');
-  for (let i = 0; i < links.length; i++) {
-    const a = document.createElement('a');
-    a.href = links[i].href;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }));
-    document.body.removeChild(a);
-    links[i].classList.add('opened');
-    await new Promise(r => setTimeout(r, 800));
-  }
-  btn.innerHTML = '&#9658;&#9658; OPEN ALL FOUND ORDERS';
-  btn.disabled = false;
-};
-
-$('rToExport').onclick = () => goView('export', 'groups');
-$('rBackFromExport').onclick = () => goView('results', 'groups');
-
-// Stock Issues CSV export
-$('rExportIssuesCsv').onclick = () => {
-  const group = state.groups.find(g => g.id === state.activeGroupId);
-  if (!group) { showNotice('OPEN A GROUP FIRST.', 'amber'); return; }
-  let csv = 'PO Number,Issues\n';
-  let rowCount = 0;
-  group.targets.filter(t => t.status === 'found').forEach(po => {
-    const cleanKey = normalizePO(po.po);
-    const meta = state.excelMeta[cleanKey] || {};
-    const party = meta.party || 'UNKNOWN CUSTOMER';
-    const issues = StockIssueAnalyzer.getIssuesForPO(cleanKey, party, isPODone(cleanKey));
-    issues.forEach(iss => {
-      csv += `"${po.po}","${iss.sku6.replace(/"/g, '""')}"\n`;
-      rowCount++;
-    });
+  $('rToggleStockIssues').addEventListener('change', (e) => {
+    state.showStockIssues = e.target.checked;
+    refreshActiveViews();
   });
-  if (rowCount === 0) { showNotice('NO STOCK ISSUES TO EXPORT.', 'amber'); return; }
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `Stock_Issues_${group.name.replace(/[^a-z0-9]/gi, '_')}.csv`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  showNotice('STOCK ISSUES EXPORTED', 'green');
-};
+  $('rToggleHideDone').addEventListener('change', (e) => {
+    state.hideDonePOs = e.target.checked;
+    refreshActiveViews();
+  });
 
-// SO vs Dispatch diff (XLSX)
-$('rExportPickingXlsx').onclick = () => {
-  if (!window.XLSX) { showNotice('EXCEL LIBRARY STILL LOADING. TRY AGAIN SHORTLY.', 'amber'); return; }
-  const soKeys = Object.keys(state.soItemsByOrderId || {});
-  const dispatchKeys = Object.keys(state.dispatchItemsByOrderId || {});
-  if (soKeys.length === 0 || dispatchKeys.length === 0) {
-    showNotice('UPLOAD BOTH THE SALES ORDER STATUS FILE AND THE DISPATCH FILE FIRST.', 'amber');
-    return;
+  $('rResetFades').onclick = () => {
+    const group = state.groups.find(g => g.id === state.activeGroupId);
+    if (group) {
+      group.targets.forEach(t => t.faded = false);
+      renderGroupDetails(group);
+    }
+    showNotice('FADES RESET.', 'green');
+  };
+
+  function triggerRescanPO(po) {
+    const g = state.groups.find(x => x.id === state.activeGroupId);
+    if (!g) return;
+    const t = g.targets.find(x => x.po === po);
+    if (t && (t.status === 'found' || t.status === 'notfound')) {
+      g.completed = Math.max(0, g.completed - 1);
+      t.status = 'pending';
+      t.reviewUrl = null;
+
+      state.pendingQueue.push({ target: t, group: g });
+
+      renderGroupDetails(g);
+      showNotice(`QUEUED RESCAN FOR ${po}`, 'green');
+      processQueue();
+    }
   }
-  const orderIdToPoNo = {};
-  Object.entries(state.poNoToOrderId).forEach(([poNo, orderId]) => {
-    if (!orderIdToPoNo[orderId]) orderIdToPoNo[orderId] = poNo;
-  });
-  const allOrderIds = new Set([...soKeys, ...dispatchKeys]);
-  const rows = [];
-  allOrderIds.forEach(orderIdKey => {
-    const soEntry = state.soItemsByOrderId[orderIdKey];
-    const soSet = soEntry ? soEntry.codes : new Set();
-    const dispSet = state.dispatchItemsByOrderId[orderIdKey] || new Set();
-    const missingFromDispatch = [...soSet].filter(c => !dispSet.has(c));
-    const missingFromSO = [...dispSet].filter(c => !soSet.has(c));
-    if (missingFromDispatch.length === 0 && missingFromSO.length === 0) return;
-    const poNo = orderIdToPoNo[orderIdKey] || orderIdKey;
-    const party = soEntry ? soEntry.party : '';
-    missingFromDispatch.forEach(code => rows.push({ poNo, orderId: orderIdKey, party, code, missingFrom: 'Dispatch File' }));
-    missingFromSO.forEach(code => rows.push({ poNo, orderId: orderIdKey, party, code, missingFrom: 'Sales Order Status' }));
-  });
-  if (rows.length === 0) { showNotice('NO MISMATCHES FOUND — ALL SKU ROWS MATCH.', 'green'); return; }
-  rows.sort((a, b) => String(a.poNo).localeCompare(String(b.poNo)) || a.missingFrom.localeCompare(b.missingFrom));
-  const header = ['PO Number', 'Order ID', 'Customer Name', 'FG Code', 'Missing From'];
-  const aoa = [header, ...rows.map(r => [r.poNo, r.orderId, r.party, r.code, r.missingFrom])];
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'SKU Mismatch');
-  XLSX.writeFile(wb, `SKU_Mismatch_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  showNotice(`MISMATCH REPORT DOWNLOADED (${rows.length} ROWS)`, 'green');
-};
 
-// =========================================================================
-// EXCEL READING
-// =========================================================================
-function readExcelFile(file, labelId, processCallback, forceHeaderRow = null) {
-  if (!file) return;
-  $(labelId).textContent = 'LOADED: ' + file.name.toUpperCase();
-  if (!window.XLSX) { showNotice("Excel Library is still loading. Please try again in a few seconds.", "amber"); return; }
-  const reader = new FileReader();
-  reader.onload = ev => {
-    try {
-      const data = new Uint8Array(ev.target.result);
-      const workbook = XLSX.read(data, { type: 'array' });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      if (!worksheet) throw new Error("No worksheet found in file.");
-      let headerRowIndex = forceHeaderRow;
-      if (headerRowIndex === null) {
-        const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        headerRowIndex = 0;
-        for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
-          if (Array.isArray(rawRows[i])) {
-            let matchCount = 0;
-            const rowStr = rawRows[i].map(c => String(c).toLowerCase()).join(' ');
-            if (rowStr.includes('order')) matchCount++;
-            if (rowStr.includes('party') || rowStr.includes('customer') || rowStr.includes('buyer')) matchCount++;
-            if (rowStr.includes('date')) matchCount++;
-            if (rowStr.includes('status')) matchCount++;
-            if (rowStr.includes('amount') || rowStr.includes('total') || rowStr.includes('value')) matchCount++;
-            if (rowStr.includes('item') || rowStr.includes('product') || rowStr.includes('qty') || rowStr.includes('code')) matchCount++;
-            if (matchCount >= 3) { headerRowIndex = i; break; }
-          }
-        }
-      }
-      const json = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "", raw: false });
-      processCallback(json);
-    } catch (err) {
-      console.error("Excel Parse Error:", err);
-      showNotice("Failed to parse Excel file.", "red");
+  $('rLinkList').addEventListener('click', e => {
+    const btn = e.target.closest('.rescan-btn');
+    if (btn) { e.preventDefault(); e.stopPropagation(); triggerRescanPO(btn.dataset.po); }
+  });
+  $('rNotFoundArea').addEventListener('click', e => {
+    const btn = e.target.closest('.rescan-btn');
+    if (btn) { e.preventDefault(); e.stopPropagation(); triggerRescanPO(btn.dataset.po); }
+  });
+
+  $('rRescanGroup').onclick = () => {
+    const g = state.groups.find(x => x.id === state.activeGroupId);
+    if (g) {
+      g.completed = 0;
+      g.targets.forEach(t => {
+        t.status = 'pending';
+        t.reviewUrl = null;
+        state.pendingQueue.push({ target: t, group: g });
+      });
+      renderGroupDetails(g);
+      showNotice(`RESCANNING BATCH: ${g.name}`, 'amber');
+      processQueue();
     }
   };
-  reader.readAsArrayBuffer(file);
-}
 
-$('rSalesOrderInput').addEventListener('change', e => {
-  readExcelFile(e.target.files[0], 'rSalesOrderName', processSalesOrderData, null);
-  e.target.value = '';
-});
-$('rDispatchInput').addEventListener('change', e => {
-  readExcelFile(e.target.files[0], 'rDispatchName', processDispatchData, 1);
-  e.target.value = '';
-});
-$('rFGInput').addEventListener('change', e => {
-  readExcelFile(e.target.files[0], 'rFGName', (data) => {
-    StockIssueAnalyzer.processFinishedGoodsData(data);
-    $('rExcelDataArea').style.display = 'block';
-    $('rExcelDataArea').innerHTML = `
+  $('rOpenAll').onclick = async function () {
+    const group = state.groups.find(g => g.id === state.activeGroupId);
+    if (!group) return;
+    const btn = this;
+    btn.textContent = 'OPENING...';
+    btn.disabled = true;
+
+    const toOpen = group.targets.filter(t => t.status === 'found' && !t.faded);
+    const linksEl = $('rLinkList');
+
+    for (let i = 0; i < toOpen.length; i++) {
+      const t = toOpen[i];
+      const a = document.createElement('a');
+      a.href = t.reviewUrl;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }));
+      document.body.removeChild(a);
+
+      t.faded = true;
+      if (linksEl) {
+        const linkEl = linksEl.querySelector(`.r-res-link[data-po="${t.po}"]`);
+        if (linkEl) linkEl.classList.add('opened');
+      }
+
+      await new Promise(r => setTimeout(r, 800));
+    }
+    btn.innerHTML = '&#9658;&#9658; OPEN ALL FOUND ORDERS';
+    btn.disabled = false;
+  };
+
+  $('rToExport').onclick = () => goView('export', 'groups');
+  $('rBackFromExport').onclick = () => goView('results', 'groups');
+
+  $('rExportIssuesCsv').onclick = () => {
+    const group = state.groups.find(g => g.id === state.activeGroupId);
+    if (!group) { showNotice('OPEN A GROUP FIRST.', 'amber'); return; }
+    let csv = 'PO Number,Issues\n';
+    let rowCount = 0;
+    group.targets.filter(t => t.status === 'found').forEach(po => {
+      const cleanKey = normalizePO(po.po);
+      const meta = state.excelMeta[cleanKey] || {};
+      const party = meta.party || 'UNKNOWN CUSTOMER';
+      const issues = StockIssueAnalyzer.getIssuesForPO(cleanKey, party, isPODone(cleanKey));
+      issues.forEach(iss => {
+        csv += `"${po.po}","${iss.sku6.replace(/"/g, '""')}"\n`;
+        rowCount++;
+      });
+    });
+    if (rowCount === 0) { showNotice('NO STOCK ISSUES TO EXPORT.', 'amber'); return; }
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Stock_Issues_${group.name.replace(/[^a-z0-9]/gi, '_')}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showNotice('STOCK ISSUES EXPORTED', 'green');
+  };
+
+  $('rExportPickingXlsx').onclick = () => {
+    if (!window.XLSX) { showNotice('EXCEL LIBRARY STILL LOADING. TRY AGAIN SHORTLY.', 'amber'); return; }
+    const soKeys = Object.keys(state.soItemsByOrderId || {});
+    const dispatchKeys = Object.keys(state.dispatchItemsByOrderId || {});
+    if (soKeys.length === 0 || dispatchKeys.length === 0) {
+      showNotice('UPLOAD BOTH THE SALES ORDER STATUS FILE AND THE DISPATCH FILE FIRST.', 'amber');
+      return;
+    }
+    const orderIdToPoNo = {};
+    Object.entries(state.poNoToOrderId).forEach(([poNo, orderId]) => {
+      if (!orderIdToPoNo[orderId]) orderIdToPoNo[orderId] = poNo;
+    });
+    const allOrderIds = new Set([...soKeys, ...dispatchKeys]);
+    const rows = [];
+    allOrderIds.forEach(orderIdKey => {
+      const soEntry = state.soItemsByOrderId[orderIdKey];
+      const soSet = soEntry ? soEntry.codes : new Set();
+      const dispSet = state.dispatchItemsByOrderId[orderIdKey] || new Set();
+      const missingFromDispatch = [...soSet].filter(c => !dispSet.has(c));
+      const missingFromSO = [...dispSet].filter(c => !soSet.has(c));
+      if (missingFromDispatch.length === 0 && missingFromSO.length === 0) return;
+      const poNo = orderIdToPoNo[orderIdKey] || orderIdKey;
+      const party = soEntry ? soEntry.party : '';
+      missingFromDispatch.forEach(code => rows.push({ poNo, orderId: orderIdKey, party, code, missingFrom: 'Dispatch File' }));
+      missingFromSO.forEach(code => rows.push({ poNo, orderId: orderIdKey, party, code, missingFrom: 'Sales Order Status' }));
+    });
+    if (rows.length === 0) { showNotice('NO MISMATCHES FOUND — ALL SKU ROWS MATCH.', 'green'); return; }
+    rows.sort((a, b) => String(a.poNo).localeCompare(String(b.poNo)) || a.missingFrom.localeCompare(b.missingFrom));
+    const header = ['PO Number', 'Order ID', 'Customer Name', 'FG Code', 'Missing From'];
+    const aoa = [header, ...rows.map(r => [r.poNo, r.orderId, r.party, r.code, r.missingFrom])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'SKU Mismatch');
+    XLSX.writeFile(wb, `SKU_Mismatch_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    showNotice(`MISMATCH REPORT DOWNLOADED (${rows.length} ROWS)`, 'green');
+  };
+
+  function readExcelFile(file, labelId, processCallback, forceHeaderRow = null) {
+    if (!file) return;
+    $(labelId).textContent = 'LOADED: ' + file.name.toUpperCase();
+    if (!window.XLSX) { showNotice("Excel Library is still loading. Please try again in a few seconds.", "amber"); return; }
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = new Uint8Array(ev.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        if (!worksheet) throw new Error("No worksheet found in file.");
+        let headerRowIndex = forceHeaderRow;
+        if (headerRowIndex === null) {
+          const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+          headerRowIndex = 0;
+          for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
+            if (Array.isArray(rawRows[i])) {
+              let matchCount = 0;
+              const rowStr = rawRows[i].map(c => String(c).toLowerCase()).join(' ');
+              if (rowStr.includes('order')) matchCount++;
+              if (rowStr.includes('party') || rowStr.includes('customer') || rowStr.includes('buyer')) matchCount++;
+              if (rowStr.includes('date')) matchCount++;
+              if (rowStr.includes('status')) matchCount++;
+              if (rowStr.includes('amount') || rowStr.includes('total') || rowStr.includes('value')) matchCount++;
+              if (rowStr.includes('item') || rowStr.includes('product') || rowStr.includes('qty') || rowStr.includes('code')) matchCount++;
+              if (matchCount >= 3) { headerRowIndex = i; break; }
+            }
+          }
+        }
+        const json = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "", raw: false });
+        processCallback(json);
+      } catch (err) {
+        console.error("Excel Parse Error:", err);
+        showNotice("Failed to parse Excel file.", "red");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  $('rSalesOrderInput').addEventListener('change', e => {
+    readExcelFile(e.target.files[0], 'rSalesOrderName', processSalesOrderData, null);
+    e.target.value = '';
+  });
+  $('rDispatchInput').addEventListener('change', e => {
+    readExcelFile(e.target.files[0], 'rDispatchName', processDispatchData, 1);
+    e.target.value = '';
+  });
+  $('rFGInput').addEventListener('change', e => {
+    readExcelFile(e.target.files[0], 'rFGName', (data) => {
+      StockIssueAnalyzer.processFinishedGoodsData(data);
+      $('rExcelDataArea').style.display = 'block';
+      $('rExcelDataArea').innerHTML = `
     <div class="r-info-box" style="text-align:center;">
       &#10004; FINISHED GOODS PROCESSED.<br><br><b>${Object.keys(StockIssueAnalyzer.fgStockData).length}</b> SKUs UPDATED FOR STOCK ANALYSIS.
     </div>`;
-    refreshActiveViews();
-    scheduleSave();
-  }, null);
-  e.target.value = '';
-});
-
-const FG_CODE_KEYS = ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Item', 'Product'];
-
-function processSalesOrderData(data) {
-  if (data.length === 0) { showNotice("NO DATA FOUND IN SALES ORDER EXCEL.", "amber"); return; }
-  let updatedCount = 0;
-  state.warehousePOs = [];
-  state.poNoToOrderId = {};
-  state.soItemsByOrderId = {};
-  state.poStatusByPO = {};
-  state.poOrderIds = {};
-  const seenOrderIdForWarehouse = new Set();
-
-  data.forEach(row => {
-    const refNo = String(getColValue(row, ['Reference Order No', 'Reference Order Number', 'Reference', 'PO No', 'PO Number', 'Customer PO', 'Order ID', 'Order No', 'Order Number', 'Ref No', 'Ref']) || '').trim();
-    const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No', 'Order']) || '').trim();
-    const party = getColValue(row, ['Party Name', 'Customer Name', 'Party', 'Sales Buyer', 'Customer', 'Buyer Name', 'Client Name']);
-    const dateStrRaw = getColValue(row, ['Order Date', 'Date', 'Requested At']);
-    const soStatus = String(getColValue(row, ['SO Status', 'SOStatus', 'Status', 'Order Status']) || '').trim();
-
-    const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
-    keys.forEach(poKey => {
-      const cleanKey = normalizePO(poKey);
-      if (!state.excelMeta[cleanKey]) state.excelMeta[cleanKey] = {};
-      if (party) state.excelMeta[cleanKey].party = party;
-      if (dateStrRaw) state.excelMeta[cleanKey].dateStrRaw = dateStrRaw;
-      if (soStatus && soStatus.toLowerCase() !== 'n/a') {
-        const prev = state.poStatusByPO[cleanKey];
-        if (!prev || soStatus.toLowerCase() === 'closed') state.poStatusByPO[cleanKey] = soStatus;
-      }
-      StockIssueAnalyzer.processSalesOrderRow(cleanKey, row);
-      updatedCount++;
-    });
-
-    const poNoRaw = String(getColValue(row, ['PO No']) || '').trim();
-    const orderIdRaw = String(getColValue(row, ['Order ID']) || '').trim();
-    const warehouseRaw = String(getColValue(row, ['Warehouse']) || '').trim();
-    const fgCode = getColValue(row, FG_CODE_KEYS);
-
-    if (orderIdRaw) {
-      const orderIdKey = normalizePO(orderIdRaw);
-      if (poNoRaw) {
-        state.poNoToOrderId[normalizePO(poNoRaw)] = orderIdKey;
-        const pnKey = normalizePO(poNoRaw);
-        if (!state.poOrderIds[pnKey]) state.poOrderIds[pnKey] = new Set();
-        state.poOrderIds[pnKey].add(orderIdKey);
-      }
-      if (!state.soItemsByOrderId[orderIdKey]) state.soItemsByOrderId[orderIdKey] = { party: party || '', codes: new Set() };
-      if (party) state.soItemsByOrderId[orderIdKey].party = party;
-      if (fgCode) state.soItemsByOrderId[orderIdKey].codes.add(String(fgCode).trim());
-      if (warehouseRaw.toLowerCase().includes(WAREHOUSE_FILTER) && !seenOrderIdForWarehouse.has(orderIdKey)) {
-        seenOrderIdForWarehouse.add(orderIdKey);
-        state.warehousePOs.push({
-          poNo: poNoRaw || orderIdRaw,
-          orderId: orderIdRaw,
-          party: party || 'UNKNOWN CUSTOMER',
-          dateStrRaw: dateStrRaw || '',
-          warehouse: warehouseRaw
-        });
-      }
-    }
+      refreshActiveViews();
+      scheduleSave();
+    }, null);
+    e.target.value = '';
   });
 
-  updateCustomerDropdown();
-  renderWarehouseTab();
+  const FG_CODE_KEYS = ['FG Code', 'Product Code', 'Product SKU', 'SKU', 'Item Code', 'Item', 'Product'];
 
-  const uniqWH = {};
-  state.warehousePOs.forEach(i => { uniqWH[normalizePO(i.poNo)] = i; });
-  const whAll = Object.values(uniqWH);
-  const whTodayCount = whAll.filter(i => isTodayDate(i.dateStrRaw)).length;
-  const closedKeys = new Set(Object.entries(state.poStatusByPO).filter(([k, v]) => String(v).toLowerCase() === 'closed').map(([k]) => k));
+  function processSalesOrderData(data) {
+    if (data.length === 0) { showNotice("NO DATA FOUND IN SALES ORDER EXCEL.", "amber"); return; }
+    let updatedCount = 0;
+    state.warehousePOs = [];
+    state.poNoToOrderId = {};
+    state.soItemsByOrderId = {};
+    state.poStatusByPO = {};
+    state.poOrderIds = {};
+    const seenOrderIdForWarehouse = new Set();
 
-  $('rExcelDataArea').style.display = 'block';
-  $('rExcelDataArea').innerHTML = `
+    data.forEach(row => {
+      const refNo = String(getColValue(row, ['Reference Order No', 'Reference Order Number', 'Reference', 'PO No', 'PO Number', 'Customer PO', 'Order ID', 'Order No', 'Order Number', 'Ref No', 'Ref']) || '').trim();
+      const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No', 'Order']) || '').trim();
+      const party = getColValue(row, ['Party Name', 'Customer Name', 'Party', 'Sales Buyer', 'Customer', 'Buyer Name', 'Client Name']);
+      const dateStrRaw = getColValue(row, ['Order Date', 'Date', 'Requested At']);
+      const soStatus = String(getColValue(row, ['SO Status', 'SOStatus', 'Status', 'Order Status']) || '').trim();
+
+      const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
+      keys.forEach(poKey => {
+        const cleanKey = normalizePO(poKey);
+        if (!state.excelMeta[cleanKey]) state.excelMeta[cleanKey] = {};
+        if (party) state.excelMeta[cleanKey].party = party;
+        if (dateStrRaw) state.excelMeta[cleanKey].dateStrRaw = dateStrRaw;
+        if (soStatus && soStatus.toLowerCase() !== 'n/a') {
+          const prev = state.poStatusByPO[cleanKey];
+          if (!prev || soStatus.toLowerCase() === 'closed') state.poStatusByPO[cleanKey] = soStatus;
+        }
+        StockIssueAnalyzer.processSalesOrderRow(cleanKey, row);
+        updatedCount++;
+      });
+
+      const poNoRaw = String(getColValue(row, ['PO No']) || '').trim();
+      const orderIdRaw = String(getColValue(row, ['Order ID']) || '').trim();
+      const warehouseRaw = String(getColValue(row, ['Warehouse']) || '').trim();
+      const fgCode = getColValue(row, FG_CODE_KEYS);
+
+      if (orderIdRaw) {
+        const orderIdKey = normalizePO(orderIdRaw);
+        if (poNoRaw) {
+          state.poNoToOrderId[normalizePO(poNoRaw)] = orderIdKey;
+          const pnKey = normalizePO(poNoRaw);
+          if (!state.poOrderIds[pnKey]) state.poOrderIds[pnKey] = new Set();
+          state.poOrderIds[pnKey].add(orderIdKey);
+        }
+        if (!state.soItemsByOrderId[orderIdKey]) state.soItemsByOrderId[orderIdKey] = { party: party || '', codes: new Set() };
+        if (party) state.soItemsByOrderId[orderIdKey].party = party;
+        if (fgCode) state.soItemsByOrderId[orderIdKey].codes.add(String(fgCode).trim());
+        if (warehouseRaw.toLowerCase().includes(WAREHOUSE_FILTER) && !seenOrderIdForWarehouse.has(orderIdKey)) {
+          seenOrderIdForWarehouse.add(orderIdKey);
+          state.warehousePOs.push({
+            poNo: poNoRaw || orderIdRaw,
+            orderId: orderIdRaw,
+            party: party || 'UNKNOWN CUSTOMER',
+            dateStrRaw: dateStrRaw || '',
+            warehouse: warehouseRaw
+          });
+        }
+      }
+    });
+
+    updateCustomerDropdown();
+    renderWarehouseTab();
+
+    const uniqWH = {};
+    state.warehousePOs.forEach(i => { uniqWH[normalizePO(i.poNo)] = i; });
+    const whAll = Object.values(uniqWH);
+    const whTodayCount = whAll.filter(i => isTodayDate(i.dateStrRaw)).length;
+    const closedKeys = new Set(Object.entries(state.poStatusByPO).filter(([k, v]) => String(v).toLowerCase() === 'closed').map(([k]) => k));
+
+    $('rExcelDataArea').style.display = 'block';
+    $('rExcelDataArea').innerHTML = `
   <div class="r-info-box" style="text-align:center;">
     &#10004; SALES ORDER PROCESSED.<br><br>CUSTOMER INFO & REQUIREMENTS EXTRACTED FOR <b>${updatedCount}</b> ROWS.<br>
     <b>${whAll.length}</b> UNIQUE POs FOR YB FG WAREHOUSE (<b>${whTodayCount}</b> TODAY) &middot; <b>${closedKeys.size}</b> KEYS MARKED CLOSED.
   </div>`;
-  refreshActiveViews();
-  scheduleSave();
-}
+    refreshActiveViews();
+    scheduleSave();
+  }
 
-function processDispatchData(data) {
-  if (data.length === 0) { showNotice("NO DATA FOUND IN DISPATCH SHEET.", "amber"); return; }
-  state.currentDispatchPOs.clear();
-  state.dispatchItemsByOrderId = {};
-  data.forEach(row => {
-    const refNo = String(getColValue(row, ['Reference Order No', 'Reference Order Number', 'Reference', 'PO No', 'PO Number']) || '').trim();
-    const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No']) || '').trim();
-    const party = getColValue(row, ['Party Name', 'Sales Buyer', 'Customer Name', 'Buyer Name']);
-    const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
-    keys.forEach(poKey => {
-      const cleanKey = normalizePO(poKey);
-      state.currentDispatchPOs.add(cleanKey);
-      if (party && !state.excelMeta[cleanKey]) state.excelMeta[cleanKey] = { party: party };
+  function processDispatchData(data) {
+    if (data.length === 0) { showNotice("NO DATA FOUND IN DISPATCH SHEET.", "amber"); return; }
+    state.currentDispatchPOs.clear();
+    state.dispatchItemsByOrderId = {};
+    data.forEach(row => {
+      const refNo = String(getColValue(row, ['Reference Order No', 'Reference Order Number', 'Reference', 'PO No', 'PO Number']) || '').trim();
+      const soNo = String(getColValue(row, ['Sales Order No', 'Sales Order Number', 'Sales Order', 'SO No']) || '').trim();
+      const party = getColValue(row, ['Party Name', 'Sales Buyer', 'Customer Name', 'Buyer Name']);
+      const keys = [refNo, soNo].filter(k => k.length > 0 && k.toLowerCase() !== 'n/a');
+      keys.forEach(poKey => {
+        const cleanKey = normalizePO(poKey);
+        state.currentDispatchPOs.add(cleanKey);
+        if (party && !state.excelMeta[cleanKey]) state.excelMeta[cleanKey] = { party: party };
+      });
+      const salesOrderRaw = String(getColValue(row, ['Sales Order']) || '').trim();
+      const fgCode = getColValue(row, FG_CODE_KEYS);
+      if (salesOrderRaw) {
+        const orderIdKey = normalizePO(salesOrderRaw);
+        if (!state.dispatchItemsByOrderId[orderIdKey]) state.dispatchItemsByOrderId[orderIdKey] = new Set();
+        if (fgCode) state.dispatchItemsByOrderId[orderIdKey].add(String(fgCode).trim());
+      }
     });
-    const salesOrderRaw = String(getColValue(row, ['Sales Order']) || '').trim();
-    const fgCode = getColValue(row, FG_CODE_KEYS);
-    if (salesOrderRaw) {
-      const orderIdKey = normalizePO(salesOrderRaw);
-      if (!state.dispatchItemsByOrderId[orderIdKey]) state.dispatchItemsByOrderId[orderIdKey] = new Set();
-      if (fgCode) state.dispatchItemsByOrderId[orderIdKey].add(String(fgCode).trim());
-    }
-  });
-  updateCustomerDropdown();
-  renderWarehouseTab();
-  $('rExcelDataArea').style.display = 'block';
-  $('rExcelDataArea').innerHTML = `
+    updateCustomerDropdown();
+    renderWarehouseTab();
+    $('rExcelDataArea').style.display = 'block';
+    $('rExcelDataArea').innerHTML = `
   <div class="r-info-box" style="text-align:center;">
     &#10004; DISPATCH SHEET PROCESSED.<br><br><b>${state.currentDispatchPOs.size}</b> POs MARKED AS PROCESSED.
   </div>`;
-  refreshActiveViews();
-  scheduleSave();
-}
+    refreshActiveViews();
+    scheduleSave();
+  }
 
-function updateCustomerDropdown() {
-  const select = $('rCustSelect');
-  const currentVal = select.value;
-  const pinnedKeys = new Set(PINNED_CUSTOMERS.map(normCust));
-  const discovered = new Set();
-  Object.values(state.excelMeta).forEach(m => {
-    if (m.party && !pinnedKeys.has(normCust(m.party))) discovered.add(m.party);
+  function updateCustomerDropdown() {
+    const select = $('rCustSelect');
+    const currentVal = select.value;
+    const pinnedKeys = new Set(PINNED_CUSTOMERS.map(normCust));
+    const discovered = new Set();
+    Object.values(state.excelMeta).forEach(m => {
+      if (m.party && !pinnedKeys.has(normCust(m.party))) discovered.add(m.party);
+    });
+    select.innerHTML = '<option value="">-- SELECT CUSTOMER --</option>';
+    const pinnedGroup = document.createElement('optgroup');
+    pinnedGroup.label = 'COMMON CUSTOMERS';
+    PINNED_CUSTOMERS.forEach(c => pinnedGroup.appendChild(new Option(c, c)));
+    select.appendChild(pinnedGroup);
+    if (discovered.size > 0) {
+      const otherGroup = document.createElement('optgroup');
+      otherGroup.label = 'FROM UPLOADED FILES';
+      Array.from(discovered).sort().forEach(c => otherGroup.appendChild(new Option(c, c)));
+      select.appendChild(otherGroup);
+    }
+    const allValues = [...PINNED_CUSTOMERS, ...discovered].map(normCust);
+    if (allValues.includes(normCust(currentVal))) select.value = currentVal;
+  }
+  updateCustomerDropdown();
+
+  function refreshActiveViews() {
+    if (state.activeGroupId) {
+      const activeGroup = state.groups.find(g => g.id === state.activeGroupId);
+      if (activeGroup) renderGroupDetails(activeGroup);
+    }
+    renderGroups();
+  }
+
+  $('rGlobalIgnore').addEventListener('input', (e) => {
+    const val = e.target.value;
+    StockIssueAnalyzer.globalIgnore = new Set(val.split(/[\n,]+/).map(s => String(s).trim().toUpperCase()).filter(Boolean));
+    refreshActiveViews();
+    scheduleSave();
   });
-  select.innerHTML = '<option value="">-- SELECT CUSTOMER --</option>';
-  const pinnedGroup = document.createElement('optgroup');
-  pinnedGroup.label = 'COMMON CUSTOMERS';
-  PINNED_CUSTOMERS.forEach(c => pinnedGroup.appendChild(new Option(c, c)));
-  select.appendChild(pinnedGroup);
-  if (discovered.size > 0) {
-    const otherGroup = document.createElement('optgroup');
-    otherGroup.label = 'FROM UPLOADED FILES';
-    Array.from(discovered).sort().forEach(c => otherGroup.appendChild(new Option(c, c)));
-    select.appendChild(otherGroup);
-  }
-  const allValues = [...PINNED_CUSTOMERS, ...discovered].map(normCust);
-  if (allValues.includes(normCust(currentVal))) select.value = currentVal;
-}
-updateCustomerDropdown();
 
-function refreshActiveViews() {
-  if (state.activeGroupId) {
-    const activeGroup = state.groups.find(g => g.id === state.activeGroupId);
-    if (activeGroup) renderGroupDetails(activeGroup);
-  }
-  renderGroups();
-}
+  const custDisplayNames = {};
 
-// =========================================================================
-// IGNORE RULES
-// =========================================================================
-$('rGlobalIgnore').addEventListener('input', (e) => {
-  const val = e.target.value;
-  StockIssueAnalyzer.globalIgnore = new Set(val.split(/[\n,]+/).map(s => String(s).trim().toUpperCase()).filter(Boolean));
-  refreshActiveViews();
-  scheduleSave();
-});
+  $('btnAddCustRule').onclick = () => {
+    const cust = $('rCustSelect').value;
+    const skus = $('rCustIgnore').value;
+    if (!cust) return showNotice('SELECT A CUSTOMER FIRST', 'red');
+    const key = normCust(cust);
+    const skuSet = new Set(skus.split(/[\n,]+/).map(s => String(s).trim().toUpperCase()).filter(Boolean));
+    if (skuSet.size === 0) {
+      delete StockIssueAnalyzer.customerIgnore[key];
+      delete custDisplayNames[key];
+    } else {
+      StockIssueAnalyzer.customerIgnore[key] = skuSet;
+      custDisplayNames[key] = cust;
+    }
+    $('rCustIgnore').value = '';
+    renderCustRules();
+    refreshActiveViews();
+    scheduleSave();
+    showNotice('CUSTOMER RULE SAVED', 'green');
+  };
 
-const custDisplayNames = {};
+  $('rCustSelect').addEventListener('change', () => {
+    const cust = $('rCustSelect').value;
+    const existing = StockIssueAnalyzer.customerIgnore[normCust(cust)];
+    $('rCustIgnore').value = existing ? Array.from(existing).join(', ') : '';
+  });
 
-$('btnAddCustRule').onclick = () => {
-  const cust = $('rCustSelect').value;
-  const skus = $('rCustIgnore').value;
-  if (!cust) return showNotice('SELECT A CUSTOMER FIRST', 'red');
-  const key = normCust(cust);
-  const skuSet = new Set(skus.split(/[\n,]+/).map(s => String(s).trim().toUpperCase()).filter(Boolean));
-  if (skuSet.size === 0) {
-    delete StockIssueAnalyzer.customerIgnore[key];
-    delete custDisplayNames[key];
-  } else {
-    StockIssueAnalyzer.customerIgnore[key] = skuSet;
-    custDisplayNames[key] = cust;
-  }
-  $('rCustIgnore').value = '';
-  renderCustRules();
-  refreshActiveViews();
-  scheduleSave();
-  showNotice('CUSTOMER RULE SAVED', 'green');
-};
-
-$('rCustSelect').addEventListener('change', () => {
-  const cust = $('rCustSelect').value;
-  const existing = StockIssueAnalyzer.customerIgnore[normCust(cust)];
-  $('rCustIgnore').value = existing ? Array.from(existing).join(', ') : '';
-});
-
-function renderCustRules() {
-  const list = $('rCustRulesList');
-  const entries = Object.keys(StockIssueAnalyzer.customerIgnore);
-  if (entries.length === 0) {
-    list.innerHTML = '<p class="r-hint">NO CUSTOMER-SPECIFIC RULES YET.</p>';
-    return;
-  }
-  let html = '';
-  entries.forEach(key => {
-    const label = custDisplayNames[key] || key;
-    const skus = Array.from(StockIssueAnalyzer.customerIgnore[key]).join(', ');
-    html += `<div class="r-rule-card">
+  function renderCustRules() {
+    const list = $('rCustRulesList');
+    const entries = Object.keys(StockIssueAnalyzer.customerIgnore);
+    if (entries.length === 0) {
+      list.innerHTML = '<p class="r-hint">NO CUSTOMER-SPECIFIC RULES YET.</p>';
+      return;
+    }
+    let html = '';
+    entries.forEach(key => {
+      const label = custDisplayNames[key] || key;
+      const skus = Array.from(StockIssueAnalyzer.customerIgnore[key]).join(', ');
+      html += `<div class="r-rule-card">
       <b>${label}</b>
       <span class="skus">${skus}</span>
       <button class="r-btn danger del-rule-btn" data-cust="${key.replace(/"/g, '&quot;')}" style="padding:3px 6px; font-size:7px; width:auto;">REMOVE</button>
     </div>`;
-  });
-  list.innerHTML = html;
-  list.querySelectorAll('.del-rule-btn').forEach(btn => {
-    btn.onclick = (e) => {
-      const c = e.target.dataset.cust;
-      delete StockIssueAnalyzer.customerIgnore[c];
-      delete custDisplayNames[c];
-      renderCustRules();
-      refreshActiveViews();
-      scheduleSave();
-    };
-  });
-}
-renderCustRules();
-
-// =========================================================================
-// BOX CALCULATOR (CSV) — unchanged
-// =========================================================================
-function parseCSV(text) {
-  const rows = [];
-  let row = [], inQ = false, val = '';
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i], n = text[i + 1];
-    if (c === '"' && inQ && n === '"') { val += '"'; i++; }
-    else if (c === '"') { inQ = !inQ; }
-    else if (c === ',' && !inQ) { row.push(val.trim()); val = ''; }
-    else if ((c === '\n' || c === '\r') && !inQ) {
-      if (c === '\r' && n === '\n') i++;
-      row.push(val.trim()); rows.push(row); row = []; val = '';
-    } else { val += c; }
-  }
-  if (val || row.length) { row.push(val.trim()); rows.push(row); }
-  return rows;
-}
-
-$('rFileInput').addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  $('rFileName').textContent = 'LOADED: ' + file.name.toUpperCase();
-  const reader = new FileReader();
-  reader.onload = ev => {
-    const rows = parseCSV(ev.target.result);
-    if (rows.length < 2) { showNotice('CSV INVALID OR EMPTY', 'red'); return; }
-    state.parsedCSV = rows;
-    const headers = rows[0];
-    const codeIdx = headers.findIndex(h => /fg\s*code/i.test(h));
-    const sizeIdx = headers.findIndex(h => /case\s*size/i.test(h));
-    $('rMappingArea').style.display = 'block';
-    const exportBtn = $('rExportBtn');
-    const exportCustomerBtn = $('rExportCustomerBtn');
-    if (codeIdx > -1 && sizeIdx > -1) {
-      $('rAutoSuccess').style.display = 'block';
-      $('rManualMapping').style.display = 'none';
-      exportBtn.dataset.codeIdx = codeIdx;
-      exportBtn.dataset.sizeIdx = sizeIdx;
-      exportCustomerBtn.dataset.codeIdx = codeIdx;
-      exportCustomerBtn.dataset.sizeIdx = sizeIdx;
-    } else {
-      $('rAutoSuccess').style.display = 'none';
-      $('rManualMapping').style.display = 'block';
-      const codeSel = $('rCodeCol'), sizeSel = $('rSizeCol');
-      codeSel.innerHTML = ''; sizeSel.innerHTML = '';
-      headers.forEach((h, i) => {
-        codeSel.add(new Option(h || 'COL' + (i + 1), i));
-        sizeSel.add(new Option(h || 'COL' + (i + 1), i));
-      });
-      delete exportBtn.dataset.codeIdx;
-      delete exportBtn.dataset.sizeIdx;
-      delete exportCustomerBtn.dataset.codeIdx;
-      delete exportCustomerBtn.dataset.sizeIdx;
-    }
-    exportBtn.disabled = false;
-    exportCustomerBtn.disabled = false;
-  };
-  reader.readAsText(file);
-});
-
-const handleExportClick = (e, isCustomerWise) => {
-  let codeIdx, sizeIdx;
-  if (e.target.dataset.codeIdx !== undefined) {
-    codeIdx = parseInt(e.target.dataset.codeIdx);
-    sizeIdx = parseInt(e.target.dataset.sizeIdx);
-  } else {
-    codeIdx = parseInt($('rCodeCol').value);
-    sizeIdx = parseInt($('rSizeCol').value);
-  }
-  generateReport(codeIdx, sizeIdx, isCustomerWise, e.target);
-};
-$('rExportBtn').onclick = (e) => handleExportClick(e, false);
-$('rExportCustomerBtn').onclick = (e) => handleExportClick(e, true);
-
-function generateReport(codeIdx, sizeIdx, isCustomerWise, btnEl) {
-  const group = state.groups.find(g => g.id === state.activeGroupId);
-  if (!group) return;
-  const caseMap = {};
-  for (let i = 1; i < state.parsedCSV.length; i++) {
-    const row = state.parsedCSV[i];
-    if (row.length <= Math.max(codeIdx, sizeIdx)) continue;
-    const c = row[codeIdx] && row[codeIdx].trim();
-    const s = parseFloat(row[sizeIdx]);
-    if (c && !isNaN(s)) caseMap[c] = s;
-  }
-  const getCaseSize = code => {
-    if (caseMap[code]) return caseMap[code];
-    const lower = code.toLowerCase();
-    for (let k in caseMap) {
-      if (k.toLowerCase() === lower || lower.includes(k.toLowerCase()) || k.toLowerCase().includes(lower)) return caseMap[k];
-    }
-    return null;
-  };
-  let csv = `GROUP: ${group.name}\n`;
-  csv += 'Total POs Parsed,' + group.targets.filter(t => t.status === 'found').length + '\n';
-  if (isCustomerWise) {
-    csv += 'Customer Name,Product Code,Total Order Qty,Case Size,Total Boxes Required\n';
-    const customerData = {};
-    group.targets.filter(t => t.status === 'found').forEach(po => {
-      const cleanKey = normalizePO(po.po);
-      const meta = state.excelMeta[cleanKey];
-      const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
-      if (!customerData[party]) customerData[party] = {};
-      po.items.forEach(item => {
-        customerData[party][item.code] = (customerData[party][item.code] || 0) + item.qty;
-      });
     });
-    let grandTotalBoxes = 0;
-    Object.keys(customerData).sort().forEach(party => {
-      const items = customerData[party];
-      for (const [code, totalQty] of Object.entries(items)) {
+    list.innerHTML = html;
+    list.querySelectorAll('.del-rule-btn').forEach(btn => {
+      btn.onclick = (e) => {
+        const c = e.target.dataset.cust;
+        delete StockIssueAnalyzer.customerIgnore[c];
+        delete custDisplayNames[c];
+        renderCustRules();
+        refreshActiveViews();
+        scheduleSave();
+      };
+    });
+  }
+  renderCustRules();
+
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], inQ = false, val = '';
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i], n = text[i + 1];
+      if (c === '"' && inQ && n === '"') { val += '"'; i++; }
+      else if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { row.push(val.trim()); val = ''; }
+      else if ((c === '\n' || c === '\r') && !inQ) {
+        if (c === '\r' && n === '\n') i++;
+        row.push(val.trim()); rows.push(row); row = []; val = '';
+      } else { val += c; }
+    }
+    if (val || row.length) { row.push(val.trim()); rows.push(row); }
+    return rows;
+  }
+
+  $('rFileInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    $('rFileName').textContent = 'LOADED: ' + file.name.toUpperCase();
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const rows = parseCSV(ev.target.result);
+      if (rows.length < 2) { showNotice('CSV INVALID OR EMPTY', 'red'); return; }
+      state.parsedCSV = rows;
+      const headers = rows[0];
+      const codeIdx = headers.findIndex(h => /fg\s*code/i.test(h));
+      const sizeIdx = headers.findIndex(h => /case\s*size/i.test(h));
+      $('rMappingArea').style.display = 'block';
+      const exportBtn = $('rExportBtn');
+      const exportCustomerBtn = $('rExportCustomerBtn');
+      if (codeIdx > -1 && sizeIdx > -1) {
+        $('rAutoSuccess').style.display = 'block';
+        $('rManualMapping').style.display = 'none';
+        exportBtn.dataset.codeIdx = codeIdx;
+        exportBtn.dataset.sizeIdx = sizeIdx;
+        exportCustomerBtn.dataset.codeIdx = codeIdx;
+        exportCustomerBtn.dataset.sizeIdx = sizeIdx;
+      } else {
+        $('rAutoSuccess').style.display = 'none';
+        $('rManualMapping').style.display = 'block';
+        const codeSel = $('rCodeCol'), sizeSel = $('rSizeCol');
+        codeSel.innerHTML = ''; sizeSel.innerHTML = '';
+        headers.forEach((h, i) => {
+          codeSel.add(new Option(h || 'COL' + (i + 1), i));
+          sizeSel.add(new Option(h || 'COL' + (i + 1), i));
+        });
+        delete exportBtn.dataset.codeIdx;
+        delete exportBtn.dataset.sizeIdx;
+        delete exportCustomerBtn.dataset.codeIdx;
+        delete exportCustomerBtn.dataset.sizeIdx;
+      }
+      exportBtn.disabled = false;
+      exportCustomerBtn.disabled = false;
+    };
+    reader.readAsText(file);
+  });
+
+  const handleExportClick = (e, isCustomerWise) => {
+    let codeIdx, sizeIdx;
+    if (e.target.dataset.codeIdx !== undefined) {
+      codeIdx = parseInt(e.target.dataset.codeIdx);
+      sizeIdx = parseInt(e.target.dataset.sizeIdx);
+    } else {
+      codeIdx = parseInt($('rCodeCol').value);
+      sizeIdx = parseInt($('rSizeCol').value);
+    }
+    generateReport(codeIdx, sizeIdx, isCustomerWise, e.target);
+  };
+  $('rExportBtn').onclick = (e) => handleExportClick(e, false);
+  $('rExportCustomerBtn').onclick = (e) => handleExportClick(e, true);
+
+  function generateReport(codeIdx, sizeIdx, isCustomerWise, btnEl) {
+    const group = state.groups.find(g => g.id === state.activeGroupId);
+    if (!group) return;
+    const caseMap = {};
+    for (let i = 1; i < state.parsedCSV.length; i++) {
+      const row = state.parsedCSV[i];
+      if (row.length <= Math.max(codeIdx, sizeIdx)) continue;
+      const c = row[codeIdx] && row[codeIdx].trim();
+      const s = parseFloat(row[sizeIdx]);
+      if (c && !isNaN(s)) caseMap[c] = s;
+    }
+    const getCaseSize = code => {
+      if (caseMap[code]) return caseMap[code];
+      const lower = code.toLowerCase();
+      for (let k in caseMap) {
+        if (k.toLowerCase() === lower || lower.includes(k.toLowerCase()) || k.toLowerCase().includes(lower)) return caseMap[k];
+      }
+      return null;
+    };
+    let csv = `GROUP: ${group.name}\n`;
+    csv += 'Total POs Parsed,' + group.targets.filter(t => t.status === 'found').length + '\n';
+    if (isCustomerWise) {
+      csv += 'Customer Name,Product Code,Total Order Qty,Case Size,Total Boxes Required\n';
+      const customerData = {};
+      group.targets.filter(t => t.status === 'found').forEach(po => {
+        const cleanKey = normalizePO(po.po);
+        const meta = state.excelMeta[cleanKey];
+        const party = meta && meta.party ? meta.party : 'UNKNOWN CUSTOMER';
+        if (!customerData[party]) customerData[party] = {};
+        po.items.forEach(item => {
+          customerData[party][item.code] = (customerData[party][item.code] || 0) + item.qty;
+        });
+      });
+      let grandTotalBoxes = 0;
+      Object.keys(customerData).sort().forEach(party => {
+        const items = customerData[party];
+        for (const [code, totalQty] of Object.entries(items)) {
+          const cs = getCaseSize(code);
+          let boxes = 'SIZE NOT FOUND';
+          if (cs) {
+            const raw = totalQty / cs;
+            boxes = raw % 1 === 0 ? raw.toString() : raw.toFixed(2);
+            grandTotalBoxes += raw;
+          }
+          csv += `"${party.replace(/"/g, '""')}","${code.replace(/"/g, '""')}",${totalQty},${cs || 'N/A'},${boxes}\n`;
+        }
+      });
+      csv += `\n,,,OVERALL TOTAL BOXES,${(grandTotalBoxes % 1 === 0 ? grandTotalBoxes : grandTotalBoxes.toFixed(2))}\n`;
+    } else {
+      csv += 'Product Code,Total Order Qty,Case Size,Total Boxes Required\n';
+      const aggregated = {};
+      group.targets.filter(t => t.status === 'found').forEach(po => {
+        po.items.forEach(item => {
+          aggregated[item.code] = (aggregated[item.code] || 0) + item.qty;
+        });
+      });
+      let grandTotal = 0;
+      for (const [code, totalQty] of Object.entries(aggregated)) {
         const cs = getCaseSize(code);
         let boxes = 'SIZE NOT FOUND';
         if (cs) {
           const raw = totalQty / cs;
           boxes = raw % 1 === 0 ? raw.toString() : raw.toFixed(2);
-          grandTotalBoxes += raw;
+          grandTotal += raw;
         }
-        csv += `"${party.replace(/"/g, '""')}","${code.replace(/"/g, '""')}",${totalQty},${cs || 'N/A'},${boxes}\n`;
+        csv += '"' + code.replace(/"/g, '""') + '",' + totalQty + ',' + (cs || 'N/A') + ',' + boxes + '\n';
       }
-    });
-    csv += `\n,,,OVERALL TOTAL BOXES,${(grandTotalBoxes % 1 === 0 ? grandTotalBoxes : grandTotalBoxes.toFixed(2))}\n`;
-  } else {
-    csv += 'Product Code,Total Order Qty,Case Size,Total Boxes Required\n';
-    const aggregated = {};
-    group.targets.filter(t => t.status === 'found').forEach(po => {
-      po.items.forEach(item => {
-        aggregated[item.code] = (aggregated[item.code] || 0) + item.qty;
-      });
-    });
-    let grandTotal = 0;
-    for (const [code, totalQty] of Object.entries(aggregated)) {
-      const cs = getCaseSize(code);
-      let boxes = 'SIZE NOT FOUND';
-      if (cs) {
-        const raw = totalQty / cs;
-        boxes = raw % 1 === 0 ? raw.toString() : raw.toFixed(2);
-        grandTotal += raw;
-      }
-      csv += '"' + code.replace(/"/g, '""') + '",' + totalQty + ',' + (cs || 'N/A') + ',' + boxes + '\n';
+      csv += '\n,,OVERALL TOTAL BOXES,' + (grandTotal % 1 === 0 ? grandTotal : grandTotal.toFixed(2)) + '\n';
     }
-    csv += '\n,,OVERALL TOTAL BOXES,' + (grandTotal % 1 === 0 ? grandTotal : grandTotal.toFixed(2)) + '\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (isCustomerWise ? 'Customer_Box_Report_' : 'Total_Box_Report_') + group.name.replace(/[^a-z0-9]/gi, '_') + '.csv';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    const old = btnEl.innerHTML;
+    btnEl.innerHTML = '\u2714 DOWNLOADED!';
+    setTimeout(() => { btnEl.innerHTML = old; }, 2500);
   }
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = (isCustomerWise ? 'Customer_Box_Report_' : 'Total_Box_Report_') + group.name.replace(/[^a-z0-9]/gi, '_') + '.csv';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  const old = btnEl.innerHTML;
-  btnEl.innerHTML = '\u2714 DOWNLOADED!';
-  setTimeout(() => { btnEl.innerHTML = old; }, 2500);
-}
 
-// =========================================================================
-// TAB-CLOSE / REFRESH GUARD + BOOT
-// =========================================================================
-window.addEventListener('beforeunload', (e) => {
-  try { saveState(); } catch (err) {}
-  if (!unloadGuardEnabled) return;
-  const hasData = state.groups.length > 0 || Object.keys(state.excelMeta).length > 0 || state.warehousePOs.length > 0;
-  if (hasData) {
-    e.preventDefault();
-    e.returnValue = '';
+  window.addEventListener('beforeunload', (e) => {
+    try { saveState(); } catch (err) { }
+    if (!unloadGuardEnabled) return;
+    const hasData = state.groups.length > 0 || Object.keys(state.excelMeta).length > 0 || state.warehousePOs.length > 0;
+    if (hasData) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  const wasRestored = loadState();
+  rebuildGroupPOIndex();
+  renderGroups();
+  renderWarehouseTab();
+  renderCustRules();
+  enableAntiSleep();
+
+  if (wasRestored) {
+    showNotice('SESSION RESTORED FROM LAST RUN', 'green');
+    const anyPending = state.groups.some(g => g.targets.some(t => t.status === 'pending'));
+    if (anyPending) processQueue();
   }
-});
-
-const wasRestored = loadState();
-renderGroups();
-renderWarehouseTab();
-renderCustRules();
-enableAntiSleep();
-
-if (wasRestored) {
-  showNotice('SESSION RESTORED FROM LAST RUN', 'green');
-  const anyPending = state.groups.some(g => g.targets.some(t => t.status === 'pending'));
-  if (anyPending) processQueue();
-}
 })();
