@@ -3,23 +3,66 @@ void (async () => {
   const existingRoot = document.getElementById('po-tool-root');
   if (existingRoot) existingRoot.remove();
 
-  async function ensureXLSX() {
-    if (window.XLSX) return window.XLSX;
-    const cdnUrls = [
-      'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
-      'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js',
-      'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
-    ];
-    for (const url of cdnUrls) {
-      try {
-        const res = await fetch(url, { credentials: 'omit', cache: 'force-cache' });
-        if (!res.ok) continue;
-        const code = await res.text();
-        (0, eval)(code);
-        if (window.XLSX) return window.XLSX;
-      } catch (e) { }
-    }
-    return window.XLSX;
+  const XLSX_CDNS = [
+    'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+    'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+    'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'
+  ];
+
+  function loadXLSXViaScriptTag(url) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = url; s.async = true;
+      const timer = setTimeout(() => { s.remove(); reject(new Error('TIMEOUT: ' + url)); }, 25000);
+      s.onload = () => { clearTimeout(timer); resolve(); };
+      s.onerror = () => { clearTimeout(timer); s.remove(); reject(new Error('BLOCKED/NETWORK: ' + url)); };
+      (document.head || document.documentElement).appendChild(s);
+    });
+  }
+
+  async function loadXLSXViaFetchEval(url) {
+    const res = await fetch(url, { credentials: 'omit', cache: 'force-cache' });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + url);
+    const code = await res.text();
+    (0, eval)(code);
+  }
+
+  async function loadXLSXViaBlob(url) {
+    const res = await fetch(url, { credentials: 'omit', cache: 'force-cache' });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + url);
+    const code = await res.text();
+    const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+    try { await loadXLSXViaScriptTag(blobUrl); } finally { setTimeout(() => URL.revokeObjectURL(blobUrl), 5000); }
+  }
+
+  let xlsxLoadPromise = null;
+  function ensureXLSX() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (xlsxLoadPromise) return xlsxLoadPromise;
+    xlsxLoadPromise = (async () => {
+      const errors = [];
+      const strategies = [
+        ['SCRIPT-TAG', loadXLSXViaScriptTag],
+        ['FETCH+EVAL', loadXLSXViaFetchEval],
+        ['FETCH+BLOB', loadXLSXViaBlob]
+      ];
+      for (const [name, fn] of strategies) {
+        for (const url of XLSX_CDNS) {
+          try {
+            await fn(url);
+            if (window.XLSX) { console.log('PO Scanner: XLSX loaded via ' + name + ' from ' + url); return window.XLSX; }
+            errors.push(name + ' loaded but XLSX missing: ' + url);
+          } catch (e) { errors.push(name + ' -> ' + (e && e.message ? e.message : String(e))); }
+        }
+      }
+      console.warn('PO Scanner: XLSX load failures:\n' + errors.join('\n'));
+      return window.XLSX || null;
+    })();
+    const p = xlsxLoadPromise;
+    p.then(() => { if (xlsxLoadPromise === p) xlsxLoadPromise = null; },
+           () => { if (xlsxLoadPromise === p) xlsxLoadPromise = null; });
+    return p;
   }
   ensureXLSX();
 
@@ -443,7 +486,7 @@ void (async () => {
         const g = state.groups.find(x => x.id === state.activeGroupId);
         if (g) renderGroupDetails(g);
       }
-    }, 600); // Throttles heavy DOM updates to ~1.5 per sec to guarantee zero freezing
+    }, 600);
   }
 
   function rebuildGroupPOIndex() {
@@ -542,12 +585,7 @@ void (async () => {
 
   function startWorkerKeepAlive() {
     if (antiSleepKeepAlive) return;
-    // Use setInterval instead of blob Worker to avoid CSP violations on bizeebuy.com
-    // (their CSP blocks blob: URLs for worker-src)
-    antiSleepKeepAlive = setInterval(() => {
-      // Lightweight no-op ping to prevent browser from throttling this tab
-      void 0;
-    }, 15000);
+    antiSleepKeepAlive = setInterval(() => { void 0; }, 15000);
   }
 
   async function enableAntiSleep() {
@@ -790,14 +828,12 @@ void (async () => {
   function parseBizeeDate(dStr) {
     if (!dStr) return Number.MAX_SAFE_INTEGER;
     const s = String(dStr).trim();
-    // 1. Handle YYYY-MM-DD or YYYY/MM/DD
     const iso = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
     if (iso) {
       const y = parseInt(iso[1], 10), mon = parseInt(iso[2], 10), day = parseInt(iso[3], 10);
       const t = new Date(y, mon - 1, day).getTime();
       return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
     }
-    // 2. Handle DD-MM-YYYY or DD/MM/YYYY (and fallback M/D/YY from Excel)
     const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
     if (m) {
       const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
@@ -816,7 +852,6 @@ void (async () => {
       const t = new Date(y, mon - 1, day).getTime();
       return isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
     }
-    // 3. Handle DD-MMM-YYYY or DD MMM YYYY (e.g., 18-Oct-2026)
     const dmyText = s.match(/^(\d{1,2})[\s\/\-]+([A-Za-z]{3,})[\s\/\-]+(\d{2,4})/);
     if (dmyText) {
       let y = parseInt(dmyText[3], 10); if (y < 100) y += 2000;
@@ -839,7 +874,7 @@ void (async () => {
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   }
 
-  function autoCreateAndScanTodayWarehouseGroup() {
+  function syncTodayWarehouseGroup() {
     const byPO = {};
     (state.warehousePOs || []).forEach(item => {
       const k = normalizePO(item.poNo);
@@ -849,7 +884,7 @@ void (async () => {
       .filter(i => isTodayDate(i.dateStrRaw) && !isPODone(normalizePO(i.poNo)))
       .map(i => i.poNo);
 
-    if (todayOpenPOs.length === 0) return { created: false, addedCount: 0, group: null };
+    if (todayOpenPOs.length === 0) return { created: false, addedCount: 0, group: null, pendingCount: 0 };
 
     const now = new Date();
     const stamp = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }).toUpperCase();
@@ -873,9 +908,7 @@ void (async () => {
       renderGroups();
       renderWarehouseTab();
       scheduleSave();
-      enableAntiSleep();
-      processQueue();
-      return { created: true, addedCount: uniquePOs.length, group };
+      return { created: true, addedCount: uniquePOs.length, group, pendingCount: uniquePOs.length };
     } else {
       const existingSet = new Set(group.targets.map(t => normalizePO(t.po)));
       const newPOs = [...new Set(todayOpenPOs)].filter(po => !existingSet.has(normalizePO(po)));
@@ -890,10 +923,9 @@ void (async () => {
         renderGroups();
         renderWarehouseTab();
         scheduleSave();
-        enableAntiSleep();
-        processQueue();
       }
-      return { created: false, addedCount: newPOs.length, group };
+      const pendingCount = group.targets.filter(t => t.status === 'pending').length;
+      return { created: false, addedCount: newPOs.length, group, pendingCount };
     }
   }
 
@@ -1006,7 +1038,6 @@ void (async () => {
         liveEl.style.display = 'none';
       }
     }
-    // REMOVED: renderWarehouseTab(); from here to prevent main thread blocking during scans
   }
 
   $('rGroupListContainer').addEventListener('click', e => {
@@ -1154,7 +1185,6 @@ void (async () => {
         if (g) renderGroupDetails(g);
       }
       scheduleSave();
-      // Drain: items may have been added while workers were finishing up
       if (state.pendingQueue.length > 0) {
         setTimeout(() => processQueue(), 150);
       }
@@ -1178,7 +1208,6 @@ void (async () => {
       } catch (e) {
         console.error('Worker', workerId, 'unhandled error for', target.po, e);
       } finally {
-        // SAFETY NET: guarantee target never stays stuck at 'scanning'
         if (target.status === 'scanning') {
           target.status = 'notfound';
           console.warn('Worker', workerId, '- forced', target.po, 'to notfound (was stuck at scanning)');
@@ -1213,7 +1242,6 @@ void (async () => {
             const html = await res.text();
             const doc = new DOMParser().parseFromString(html, 'text/html');
 
-            // OPTIMIZATION: Only scan grid rows instead of all document TDs to prevent UI lockup
             const rows = doc.querySelectorAll('#biz-grid-list table tbody tr.biz-grid-list, #biz-grid-list table tbody tr');
             for (const row of rows) {
               if (row.textContent.includes(target.po)) {
@@ -1380,25 +1408,48 @@ void (async () => {
     let todayBannerHtml = '';
     if (todayGroup) {
       const pct = todayGroup.total === 0 ? 0 : Math.round((todayGroup.completed / todayGroup.total) * 100);
-      const isDone = todayGroup.completed >= todayGroup.total;
+      const pendingCount = todayGroup.targets.filter(t => t.status === 'pending').length;
+      const scanningCount = todayGroup.targets.filter(t => t.status === 'scanning').length;
+      const isDone = todayGroup.completed >= todayGroup.total && scanningCount === 0 && pendingCount === 0;
+
+      let statusText = '';
+      let statusColor = '';
+      let scanBtnHtml = '';
+
+      if (isDone) {
+        statusText = 'SCAN COMPLETE';
+        statusColor = 'var(--retro-green)';
+      } else if (pendingCount > 0 && !state.isScanning) {
+        statusText = `${pendingCount} PENDING / NOT SCANNING`;
+        statusColor = 'var(--retro-red)';
+        scanBtnHtml = `<button class="r-btn primary" id="rWhStartScanNow" style="width:auto; padding:5px 10px; font-size:7px;">&#9654; START SCAN (${pendingCount} POs)</button>`;
+      } else if (state.isScanning) {
+        statusText = `SCANNING... (${pendingCount} PENDING)`;
+        statusColor = 'var(--retro-amber)';
+      } else {
+        statusText = `SCANNING...`;
+        statusColor = 'var(--retro-amber)';
+      }
+
       todayBannerHtml = `
       <div class="r-info-box" style="margin-bottom:12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
           <b style="font-family:'Press Start 2P', monospace; font-size:8px;">${escHtml(todayGroup.name)}</b>
-          <span style="font-family:'Press Start 2P', monospace; font-size:7px; color:${isDone ? 'var(--retro-green)' : 'var(--retro-amber)'};">
-            ${isDone ? 'SCAN COMPLETE' : `SCANNING ${todayGroup.completed}/${todayGroup.total}`}
+          <span style="font-family:'Press Start 2P', monospace; font-size:7px; color:${statusColor};">
+              ${statusText}
           </span>
         </div>
         <div class="r-progress-bar-bg" style="margin-bottom:8px;"><div class="r-progress-bar" style="width:${pct}%"></div></div>
-        <div class="r-btn-row">
-          <button class="r-btn success" id="rWhOpenTodayGroup" data-gid="${todayGroup.id}">&#9658; OPEN TODAY'S SCAN RESULTS (${todayGroup.completed}/${todayGroup.total})</button>
+        <div class="r-btn-row" style="gap:6px; flex-wrap:wrap;">
+          <button class="r-btn success" id="rWhOpenTodayGroup" data-gid="${todayGroup.id}">&#9658; OPEN RESULTS (${todayGroup.completed}/${todayGroup.total})</button>
+          ${scanBtnHtml}
         </div>
       </div>`;
     } else if (todayList.length > 0) {
       todayBannerHtml = `
-      <div class="r-warn-box" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <div class="r-warn-box" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
         <span><b>${todayList.length} TODAY'S YB WAREHOUSE POs READY</b></span>
-        <button class="r-btn success" id="rWhScanTodayNow" style="width:auto; padding:5px 10px;">&#9654; SCAN TODAY'S POs NOW</button>
+        <button class="r-btn success" id="rWhCreateAndScan" style="width:auto; padding:5px 10px; font-size:7px;">&#9654; CREATE & SCAN TODAY'S POs NOW</button>
       </div>`;
     }
 
@@ -1457,21 +1508,29 @@ void (async () => {
     } else if (e.target.closest('#rWhOpenTodayGroup')) {
       const gid = parseInt(e.target.closest('#rWhOpenTodayGroup').dataset.gid, 10);
       if (gid) openGroupResults(gid);
-    } else if (e.target.closest('#rWhScanTodayNow')) {
-      const res = autoCreateAndScanTodayWarehouseGroup();
+    } else if (e.target.closest('#rWhStartScanNow')) {
+      enableAntiSleep();
+      processQueue();
+      showNotice('STARTING BACKGROUND SCAN...', 'green');
+      renderWarehouseTab();
+    } else if (e.target.closest('#rWhCreateAndScan')) {
+      const res = syncTodayWarehouseGroup();
       if (res.group) {
-        openGroupResults(res.group.id);
-        showNotice(`SCANNING TODAY'S YB WAREHOUSE POs`, 'green');
+        enableAntiSleep();
+        processQueue();
+        showNotice(`STARTING SCAN FOR ${res.addedCount || res.pendingCount} TODAY'S POs`, 'green');
       }
     }
   });
 
   $('rWhCreateGroup').onclick = () => {
     if (!state.warehouseShowAllDates) {
-      const res = autoCreateAndScanTodayWarehouseGroup();
-      if (res.group) {
+      const res = syncTodayWarehouseGroup();
+      if (res.group && res.pendingCount > 0) {
+        enableAntiSleep();
+        processQueue();
         openGroupResults(res.group.id);
-        showNotice(res.created ? `STARTED SCAN FOR ${res.addedCount} TODAY'S POs` : (res.addedCount > 0 ? `ADDED ${res.addedCount} NEW POs TO TODAY'S SCAN` : `OPENED TODAY'S YB WAREHOUSE GROUP`), 'green');
+        showNotice(`STARTING SCAN FOR ${res.pendingCount} TODAY'S POs`, 'green');
         return;
       }
     }
@@ -1534,7 +1593,7 @@ void (async () => {
         if (!groupedPOs[party]) groupedPOs[party] = [];
         groupedPOs[party].push(t);
       });
-      let listHtml = []; // Use array join for faster string concatenation
+      let listHtml = [];
       let renderedCount = 0;
       Object.keys(groupedPOs).sort().forEach(party => {
         const sortedItems = groupedPOs[party].slice().sort((a, b) => {
@@ -1750,8 +1809,12 @@ void (async () => {
     showNotice('STOCK ISSUES EXPORTED', 'green');
   };
 
-  $('rExportPickingXlsx').onclick = () => {
-    if (!window.XLSX) { showNotice('EXCEL LIBRARY STILL LOADING. TRY AGAIN SHORTLY.', 'amber'); return; }
+  $('rExportPickingXlsx').onclick = async () => {
+    if (!window.XLSX) {
+      showNotice('LOADING EXCEL ENGINE...', 'amber');
+      await ensureXLSX();
+    }
+    if (!window.XLSX) { showNotice('EXCEL ENGINE UNAVAILABLE. OPEN CONSOLE (F12) FOR DETAILS.', 'red'); return; }
     const soKeys = Object.keys(state.soItemsByOrderId || {});
     const dispatchKeys = Object.keys(state.dispatchItemsByOrderId || {});
     if (soKeys.length === 0 || dispatchKeys.length === 0) {
@@ -1783,14 +1846,64 @@ void (async () => {
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'SKU Mismatch');
+    XLSX.writeFile(wb, 'SO_vs_Dispatch_Diff.xlsx');
+    showNotice('MISMATCH REPORT EXPORTED', 'green');
+  };
+
   async function readExcelFile(file, labelId, processCallback, forceHeaderRow = null) {
     if (!file) return;
     $(labelId).textContent = 'LOADED: ' + file.name.toUpperCase();
+
+    // CSV files parse natively — no XLSX engine needed at all
+    if (/\.csv$/i.test(file.name || '')) {
+      try {
+        const text = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = () => rej(new Error('FILE READ FAILED'));
+          r.readAsText(file);
+        });
+        const rows = parseCSV(text);
+        let headerRowIndex = forceHeaderRow;
+        if (headerRowIndex === null) {
+          headerRowIndex = 0;
+          for (let i = 0; i < Math.min(rows.length, 25); i++) {
+            const rowStr = (rows[i] || []).map(c => String(c).toLowerCase()).join(' ');
+            let matchCount = 0;
+            if (rowStr.includes('order')) matchCount++;
+            if (rowStr.includes('party') || rowStr.includes('customer') || rowStr.includes('buyer')) matchCount++;
+            if (rowStr.includes('date')) matchCount++;
+            if (rowStr.includes('status')) matchCount++;
+            if (rowStr.includes('amount') || rowStr.includes('total') || rowStr.includes('value')) matchCount++;
+            if (rowStr.includes('item') || rowStr.includes('product') || rowStr.includes('qty') || rowStr.includes('code')) matchCount++;
+            if (matchCount >= 3) { headerRowIndex = i; break; }
+          }
+        }
+        const headers = (rows[headerRowIndex] || []).map((h, i) => String(h === '' || h == null ? ('COL' + (i + 1)) : h));
+        const json = rows.slice(headerRowIndex + 1)
+          .filter(r => (r || []).some(c => String(c == null ? '' : c).trim() !== ''))
+          .map(r => {
+            const o = {};
+            headers.forEach((h, i) => { o[h] = String(r[i] == null ? '' : r[i]).trim(); });
+            return o;
+          });
+        processCallback(json);
+        return;
+      } catch (err) {
+        console.error('CSV Parse Error:', err);
+        showNotice('Failed to parse CSV file.', 'red');
+        return;
+      }
+    }
+
     if (!window.XLSX) {
-      showNotice("LOADING EXCEL ENGINE...", "amber");
+      showNotice('LOADING EXCEL ENGINE...', 'amber');
       await ensureXLSX();
     }
-    if (!window.XLSX) { showNotice("Excel Library failed to load. Check internet connection.", "red"); return; }
+    if (!window.XLSX) {
+      showNotice('EXCEL ENGINE BLOCKED BY SITE POLICY OR NETWORK. OPEN CONSOLE (F12) FOR DETAILS. CSV FILES STILL WORK.', 'red');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = ev => {
       try {
@@ -1913,7 +2026,7 @@ void (async () => {
     });
 
     updateCustomerDropdown();
-    const autoScanRes = autoCreateAndScanTodayWarehouseGroup();
+    const autoScanRes = syncTodayWarehouseGroup();
     renderWarehouseTab();
 
     const uniqWH = {};
@@ -1923,9 +2036,9 @@ void (async () => {
     const closedKeys = new Set(Object.entries(state.poStatusByPO).filter(([k, v]) => String(v).toLowerCase() === 'closed').map(([k]) => k));
 
     const autoScanMsg = autoScanRes.created
-      ? `<br><span style="color:var(--retro-amber);">&#9654; AUTO-CREATED GROUP "<b>${escHtml(autoScanRes.group.name)}</b>" &amp; STARTED SCANNING <b>${autoScanRes.addedCount}</b> TODAY'S POs!</span>`
+      ? `<br><span style="color:var(--retro-amber);">&#9654; AUTO-CREATED GROUP "<b>${escHtml(autoScanRes.group.name)}</b>" &amp; QUEUED <b>${autoScanRes.addedCount}</b> TODAY'S POs FOR SCAN.</span>`
       : (autoScanRes.addedCount > 0
-        ? `<br><span style="color:var(--retro-amber);">&#9654; ADDED <b>${autoScanRes.addedCount}</b> NEW TODAY'S POs TO "<b>${escHtml(autoScanRes.group.name)}</b>" &amp; SCANNING!</span>`
+        ? `<br><span style="color:var(--retro-amber);">&#9654; ADDED <b>${autoScanRes.addedCount}</b> NEW TODAY'S POs TO "<b>${escHtml(autoScanRes.group.name)}</b>" &amp; QUEUED FOR SCAN.</span>`
         : '');
 
     $('rExcelDataArea').style.display = 'block';
@@ -1935,7 +2048,7 @@ void (async () => {
     <b>${whAll.length}</b> UNIQUE POs FOR YB FG WAREHOUSE (<b>${whTodayCount}</b> TODAY) &middot; <b>${closedKeys.size}</b> KEYS MARKED CLOSED.${autoScanMsg}
   </div>`;
     if (autoScanRes.created || autoScanRes.addedCount > 0) {
-      showNotice(`AUTO-SCANNING ${autoScanRes.addedCount} TODAY'S YB WAREHOUSE POs`, 'green');
+      showNotice(`${autoScanRes.addedCount} TODAY'S YB WAREHOUSE POs QUEUED`, 'green');
     }
     refreshActiveViews();
     scheduleSave();
