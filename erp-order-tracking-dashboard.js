@@ -93,7 +93,7 @@ void (async () => {
 .r-btn.success:hover:not(:disabled) { background: rgba(140,184,122,0.24); }
 .r-btn.danger { background: rgba(214,140,134,0.12); border-color: var(--retro-red); color: var(--retro-red); }
 .r-btn.danger:hover:not(:disabled) { background: rgba(214,140,134,0.24); }
-.r-btn.secondary { background: var(--retro-dim); border-color: var(--retro-border); color: var(--retro-muted); }
+.r-btn.secondary { background: var(--retro-dim); border: var(--px) solid var(--retro-border); color: var(--retro-muted); }
 .r-btn.secondary:hover:not(:disabled) { border-color: var(--retro-muted); color: var(--retro-text); }
 .r-btn.amber { background: rgba(224,176,84,0.12); border-color: var(--retro-amber); color: var(--retro-amber); }
 .r-btn.amber:hover:not(:disabled) { background: rgba(224,176,84,0.22); }
@@ -1574,7 +1574,14 @@ void (async () => {
   $('rExportIssuesCsv').onclick = () => {
     const group = state.groups.find(g => g.id === state.activeGroupId);
     if (!group) { showNotice('OPEN A GROUP FIRST.', 'amber'); return; }
-    let csv = 'PO Number,Issues\n';
+
+    const now = new Date();
+    const datePart = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const timePart = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    const readableDateTime = `${datePart} ${timePart}`;
+    const fileDateTime = `${datePart.replace(/[\s,]+/g, '-')}_${timePart.replace(/[:\s]+/g, '-')}`;
+
+    let csv = `"Downloaded Date & Time","${readableDateTime}"\nPO Number,Issues\n`;
     let rowCount = 0;
     group.targets.filter(t => t.status === 'found').forEach(po => {
       const cleanKey = normalizePO(po.po);
@@ -1591,7 +1598,7 @@ void (async () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Stock_Issues_${group.name.replace(/[^a-z0-9]/gi, '_')}.csv`;
+    a.download = `Stock_Issues_${group.name.replace(/[^a-z0-9]/gi, '_')}_${fileDateTime}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showNotice('STOCK ISSUES EXPORTED', 'green');
